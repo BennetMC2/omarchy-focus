@@ -49,11 +49,12 @@ omarchy-shell local.focus preview denied    # or granted, morning, strip, honor,
 Needs Omarchy 4 (Quickshell shell), Python 3.11+, and Claude Code signed in. So far this has only run on its author's machine.
 
 ```sh
-git clone https://github.com/BennetMC2/omarchy-focus ~/.config/omarchy/plugins/local.focus
-omarchy plugin enable local.focus
+omarchy plugin add https://github.com/BennetMC2/omarchy-focus --enable
 ln -sf ~/.config/omarchy/plugins/local.focus/focusctl ~/.local/bin/focusctl
 omarchy restart shell
 ```
+
+`omarchy plugin add` shows what it is about to clone and asks before enabling it.
 
 Then click the Focus icon in the bar. It walks you through the rest, including the one password prompt for system-wide website blocking.
 
@@ -73,6 +74,17 @@ Then click the Focus icon in the bar. It walks you through the rest, including t
 | `browser/` | Companion extension: redirects blocked sites to a local page. |
 
 State lives in `~/.local/state/local.focus/` (`state.json`, `chat.json`).
+
+## Uninstall
+
+```sh
+focusctl recover                      # remove every block first
+omarchy plugin remove local.focus
+rm ~/.local/bin/focusctl
+sudo rm /usr/local/bin/focus-root-helper /usr/share/polkit-1/actions/local.focus.policy /etc/polkit-1/rules.d/49-local.focus.rules
+```
+
+It also added its extension to `~/.config/chromium-flags.conf` (and Brave's), keeping the original as `chromium-flags.conf.before-focus`, and a `local.omarchy.focus.json` under each browser's `NativeMessagingHosts`. State is in `~/.local/state/local.focus/`.
 
 ## Recovery
 
