@@ -102,6 +102,7 @@ Item {
       if (JSON.stringify(next[key]) === JSON.stringify(state[key])) next[key] = state[key]
     }
     var unlocked = ready && state.started && state.locked && next.started && next.fullUnlock
+    var began = ready && !state.started && next.started && state.date === next.date
     if (state.date !== next.date) morningShown = false
     state = next
     ready = true
@@ -110,6 +111,7 @@ Item {
     if (aside && view) { reopenAfterAuth = true; close() }
     if (!aside && reopenAfterAuth) { reopenAfterAuth = false; show() }
     if (unlocked && !screenLocked) takeover("granted", "")
+    if (began && !screenLocked) takeover("start", "")
     if (next.blockedAt > lastBlocked) {
       var first = lastBlocked === 0
       lastBlocked = next.blockedAt
@@ -192,7 +194,7 @@ Item {
     function close(): void { root.close() }
     function toggle(): void { root.view ? root.close() : root.openHome() }
     function say(text: string): void { root.say(text) }
-    // Shows a look without changing anything: denied, granted, morning, strip, honor, hard or lockdown.
+    // Shows a look without changing anything: denied, granted, morning, start, strip, honor, hard or lockdown.
     function preview(kind: string): void {
       if (kind === "strip") { root.stripPreview = true; stripPreviewOff.restart() }
       else if (kind === "honor" || kind === "hard" || kind === "lockdown") { root.skinPreview = kind; root.openHome() }

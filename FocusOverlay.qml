@@ -30,9 +30,16 @@ Item {
     return days >= 30 ? "ghost" : days >= 14 ? "veteran" : days >= 7 ? "specialist" : days >= 3 ? "operator" : days >= 1 ? "initiate" : "drifter"
   }
   readonly property string kind: service ? service.alarmKind : ""
-  readonly property string bannerTitle: kind === "granted" ? "ACCESS GRANTED" : kind === "morning" ? "NEW DAY" : "ACCESS DENIED"
+  readonly property string bannerTitle: kind === "granted" ? "ACCESS GRANTED" : kind === "morning" ? "NEW DAY" : kind === "start" ? "LOCKED IN" : "ACCESS DENIED"
+  readonly property var mainTask: (snapshot.tasks || []).filter(function(t) { return t.main })[0] || null
+  // The list is settled and the day has not begun: one Enter starts it.
+  readonly property bool readyToStart: !!snapshot.setup && !snapshot.started && (snapshot.tasks || []).length > 0 && !!mainTask
+    && (snapshot.tasks || []).filter(function(t) { return t.main }).length === 1 && !(snapshot.carry || []).length && !chat.busy
+  // Locking in is a moment, not a message: once it has played, the card gets out of the way.
+  onIntroChanged: if (!intro && alarm && kind === "start" && service) service.close()
   readonly property string bannerLine: {
     if (kind === "granted") return "everything is unlocked. good work."
+    if (kind === "start") return (mainTask ? "★ " + mainTask.text + " · " : "") + (snapshot.total || 0) + " to go"
     if (kind === "morning") {
       var y = snapshot.yesterday
       return (y ? "yesterday " + y.completed + " of " + y.total + (y.grade ? " · " + y.grade.toLowerCase() : "") + " · " : "") + "rank " + rank + " · everything is locked"
@@ -47,7 +54,7 @@ Item {
     if (!snapshot.setup) return "setting up"
     if (snapshot.recovered) return "recovery · blocking off"
     var count = snapshot.total ? (snapshot.completed || 0) + " of " + snapshot.total + " · " : ""
-    if (!snapshot.started) return count + "not started"
+    if (!snapshot.started) return readyToStart ? "ready" : count + "not started"
     if (snapshot.locked) return count + "locked"
     if (snapshot.fullUnlock) return count + "unlocked"
     return count + "unlocked " + Math.max(1, Math.ceil(((snapshot.until || 0) - clock) / 60)) + "m"
@@ -265,6 +272,9 @@ Item {
                   id: row
                   required property var modelData
                   readonly property bool passed: modelData.status === "passed"
+                  // A verdict that just landed glows for a few seconds.
+                  readonly property real verdictAt: (modelData.verdicts || []).length ? modelData.verdicts[modelData.verdicts.length - 1].at : 0
+                  readonly property bool fresh: verdictAt > 0 && root.clock - verdictAt < 4
                   readonly property var change: (root.snapshot.pending || {})[modelData.id] || null
                   Layout.fillWidth: true
                   spacing: Style.space(12)
@@ -277,7 +287,11 @@ Item {
                   ColumnLayout {
                     Layout.fillWidth: true
                     spacing: Style.space(3)
-                    Line { text: modelData.text; color: row.passed ? Color.muted : Color.menu.text; font.pixelSize: Style.font.heading; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    Line {
+                      text: modelData.text; font.pixelSize: Style.font.heading; Layout.fillWidth: true; wrapMode: Text.Wrap
+                      color: row.fresh ? (row.passed ? root.tone : Color.urgent) : row.passed ? Color.muted : Color.menu.text
+                      Behavior on color { ColorAnimation { duration: 900 } }
+                    }
                     Line { visible: !!modelData.note; text: modelData.note || ""; color: Color.muted; font.pixelSize: Style.font.body; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     Line { visible: !!row.change; text: row.change ? root.pendingText(row.change) : ""; color: root.tone; font.pixelSize: Style.font.body }
                     Line {
@@ -382,8 +396,9 @@ Item {
               maximumLength: 4000
               focus: true
               cursorDelegate: Rectangle { width: Style.space(8); color: root.tone; opacity: prompt.activeFocus ? 0.9 : 0 }
-              property string ghost: root.picked.length ? "add your own, or press enter" : root.chat.suggestion || (!root.snapshot.agent ? "type a task" : !root.snapshot.setup ? "" : !root.snapshot.started ? "say what today holds" : root.snapshot.locked ? "say what's done" : "")
+              property string ghost: root.picked.length ? "add your own, or press enter" : root.readyToStart ? "press enter to lock in" : root.chat.suggestion || (!root.snapshot.agent ? "type a task" : !root.snapshot.setup ? "" : !root.snapshot.started ? "say what today holds" : root.snapshot.locked ? "say what's done" : "")
               function submit() {
+                if (!text.trim() && !root.picked.length && root.readyToStart) { root.service.send({op: "start"}); return }
                 var words = root.picked.concat(text.trim() ? [text.trim()] : []).join(", ") || root.chat.suggestion || ""
                 if (!words) return
                 root.service.say(words)
@@ -403,8 +418,8 @@ Item {
                 visible: !prompt.text
                 x: Style.space(14)
                 text: prompt.ghost
-                color: Color.muted; font.pixelSize: Style.font.heading
-                opacity: root.chat.suggestion ? 0.9 : 0.55
+                color: root.readyToStart ? root.tone : Color.muted; font.pixelSize: Style.font.heading
+                opacity: root.readyToStart || root.chat.suggestion ? 0.9 : 0.55
               }
             }
           }
@@ -419,7 +434,7 @@ Item {
               font.pixelSize: Style.font.bodySmall; opacity: 0.8
             }
             Line {
-              text: (root.choices.length ? "click to pick · " : "") + (root.chat.suggestion && !prompt.text && !root.picked.length ? "enter accepts · " : "enter sends · ") + "esc closes"
+              text: (root.choices.length ? "click to pick · " : "") + (root.readyToStart && !prompt.text ? "enter locks in · " : root.chat.suggestion && !prompt.text && !root.picked.length ? "enter accepts · " : "enter sends · ") + "esc closes"
               color: Color.muted; font.pixelSize: Style.font.bodySmall; opacity: 0.8
             }
           }
