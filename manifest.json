@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "local.focus",
+  "name": "Omarchy Focus",
+  "version": "2.1.0",
+  "author": "Bennet",
+  "description": "Tell it your day. An agent keeps your distractions blocked until the work checks out.",
+  "license": "MIT",
+  "kinds": [
+    "service",
+    "bar-widget",
+    "panel",
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Focus.qml",
+    "panel": "TaskPanel.qml",
+    "overlay": "FocusOverlay.qml"
+  },
+  "barWidget": {
+    "displayName": "Omarchy Focus",
+    "description": "Today's progress",
+    "category": "Plugin",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}

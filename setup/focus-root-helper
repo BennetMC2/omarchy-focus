@@ -1,0 +1,107 @@
+#!/usr/bin/python3 -I
+"""Root boundary: fixed policy paths and one marked hosts block. No shell commands."""
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import tempfile
+
+POLICIES = (Path('/etc/chromium/policies/managed/local.focus.json'),
+            Path('/etc/brave/policies/managed/local.focus.json'),
+            Path('/etc/opt/chrome/policies/managed/local.focus.json'))
+BINARIES = (('/usr/bin/chromium',), ('/usr/bin/brave','/usr/bin/brave-browser'), ('/usr/bin/google-chrome','/usr/bin/google-chrome-stable'))
+HOSTS = Path('/etc/hosts')
+BEGIN = '# BEGIN local.focus — managed by focus-root-helper'
+END = '# END local.focus'
+
+def safe(path):
+    for parent in (path, *path.parents):
+        if parent.is_symlink(): raise ValueError('Refusing symlink: ' + str(parent))
+        if parent.exists():
+            s = parent.stat()
+            if s.st_uid != 0 or s.st_mode & 0o022: raise ValueError('Path must be root-owned and not group/world writable: ' + str(parent))
+    if path.exists() and not path.is_file(): raise ValueError('Expected a regular file.')
+
+def atomic(path, content):
+    safe(path)
+    path.parent.mkdir(parents=True,exist_ok=True,mode=0o755)
+    previous = path.stat() if path.exists() else None
+    fd, name = tempfile.mkstemp(prefix='.local.focus-',dir=path.parent)
+    try:
+        with os.fdopen(fd,'w') as out:
+            out.write(content); out.flush(); os.fsync(out.fileno())
+            os.fchmod(out.fileno(),stat.S_IMODE(previous.st_mode) if previous else 0o644)
+            if previous: os.fchown(out.fileno(),previous.st_uid,previous.st_gid)
+        os.replace(name,path)
+    finally:
+        if os.path.exists(name): os.unlink(name)
+
+def hosts_content(original, domains):
+    # Preserve every byte outside our marked region, including other tools' blocks.
+    starts = list(re.finditer(r'(?m)^' + re.escape(BEGIN) + r'\n', original))
+    ends = list(re.finditer(r'(?m)^' + re.escape(END) + r'(?:\n|$)', original))
+    if len(starts) != len(ends) or len(starts)>1: raise ValueError('Malformed Focus hosts markers; refusing to edit unrelated entries.')
+    if starts:
+        if starts[0].start() >= ends[0].start(): raise ValueError('Malformed Focus hosts markers.')
+        original = original[:starts[0].start()] + original[ends[0].end():]
+    if domains:
+        if original and not original.endswith('\n'): original += '\n'
+        names = sorted(set(domains) | {'www.' + d for d in domains})
+        original += BEGIN + '\n' + ''.join('0.0.0.0 ' + d + '\n:: ' + d + '\n' for d in names) + END + '\n'
+    return original
+
+def validate(data):
+    if not isinstance(data,dict) or set(data) != {'locked','sites','hosts'}: raise ValueError('Expected locked, sites, hosts only.')
+    if type(data['locked']) is not bool or type(data['hosts']) is not bool: raise ValueError('Expected booleans.')
+    if not isinstance(data['sites'],list) or len(data['sites'])>500: raise ValueError('Maximum 500 domains.')
+    for d in data['sites']:
+        if not isinstance(d,str) or len(d)>249 or not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}',d): raise ValueError('Invalid domain.')
+    return sorted(set(data['sites'])) if data['locked'] else []
+
+def apply(data):
+    domains=validate(data)
+    # Validate every destination and conflict before making changes.
+    targets=[]
+    for path,binaries in zip(POLICIES,BINARIES):
+        safe(path)
+        installed=any(Path(b).exists() for b in binaries)
+        if domains and installed:
+            for other in path.parent.glob('*.json'):
+                if other==path: continue
+                try:
+                    if 'URLBlocklist' in json.loads(other.read_text()): raise ValueError('Another policy defines URLBlocklist: ' + str(other))
+                except json.JSONDecodeError: continue
+        targets.append((path,installed))
+    safe(HOSTS)
+    original=HOSTS.read_text()
+    updated=hosts_content(original,domains if data['hosts'] else [])
+    for path,installed in targets:
+        if domains and installed:
+            content=json.dumps({'URLBlocklist':domains},indent=2)+'\n'
+            if not path.exists() or path.read_text()!=content: atomic(path,content)
+        elif path.exists(): path.unlink()
+    if original!=updated: atomic(HOSTS,updated)
+    return {'policies':[str(p) for p,_ in targets if p.exists()], 'hosts': bool(domains and data['hosts'])}
+
+def main():
+    if os.geteuid()!=0: raise ValueError('This helper requires root.')
+    if len(sys.argv)!=2 or sys.argv[1] not in ('apply','recover','status'): raise ValueError('Use apply, recover or status.')
+    # Serialize changes across shell restarts and recovery calls.
+    lock_path=Path('/run/lock/local.focus.lock')
+    fd=os.open(lock_path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,'w') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        if sys.argv[1]=='status':
+            result={'policies':[str(p) for p in POLICIES if p.exists()], 'hosts':BEGIN in HOSTS.read_text()}
+        else:
+            raw=sys.stdin.read(65537) if sys.argv[1]=='apply' else ''
+            if len(raw)>65536: raise ValueError('Request too large.')
+            result=apply(json.loads(raw) if raw else {'locked':False,'sites':[],'hosts':False})
+        print(json.dumps(result))
+
+if __name__=='__main__':
+    try: main()
+    except Exception as exc: print(str(exc),file=sys.stderr); sys.exit(1)

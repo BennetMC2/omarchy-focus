@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Omarchy Focus",
+  "version": "1.0.0",
+  "description": "Local task verdicts and website blocking",
+  "permissions": ["nativeMessaging", "declarativeNetRequest", "storage", "tabs", "alarms", "webNavigation"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_title": "Today"},
+  "web_accessible_resources": [{"resources": ["blocked.html", "blocked.css", "blocked.js"], "matches": ["<all_urls>"]}]
+}
