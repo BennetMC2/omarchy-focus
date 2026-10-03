@@ -36,7 +36,7 @@ Item {
   readonly property bool readyToStart: !!snapshot.setup && !snapshot.started && (snapshot.tasks || []).length > 0 && !!mainTask
     && (snapshot.tasks || []).filter(function(t) { return t.main }).length === 1 && !(snapshot.carry || []).length && !chat.busy
   // Locking in is a moment, not a message: once it has played, the card gets out of the way.
-  onIntroChanged: if (!intro && alarm && kind === "start" && service) service.close()
+  onIntroChanged: if (!intro && alarm && kind === "start" && service) Qt.callLater(service.close)
   readonly property string bannerLine: {
     if (kind === "granted") return "everything is unlocked. good work."
     if (kind === "start") return (mainTask ? "★ " + mainTask.text + " · " : "") + (snapshot.total || 0) + " to go"
