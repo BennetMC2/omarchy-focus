@@ -23,6 +23,7 @@ Item {
   }
   readonly property string strictness: (service && service.skinPreview) || snapshot.settings.strictness || "standard"
   // Lockdown runs in the theme's red; hard and lockdown get scanlines.
+  readonly property var levels: ["honor", "standard", "hard", "lockdown"]
   readonly property color tone: strictness === "lockdown" ? Color.urgent : Color.accent
   readonly property bool harsh: strictness === "hard" || strictness === "lockdown"
   readonly property string rank: {
@@ -230,7 +231,7 @@ Item {
 
           RowLayout {
             Layout.fillWidth: true
-            Line { text: "FOCUS" + (root.strictness !== "standard" ? " // " + root.strictness.toUpperCase() : ""); color: root.strictness === "lockdown" ? root.tone : Color.menu.text; font.pixelSize: Style.font.title; font.weight: Font.Bold; font.letterSpacing: Style.space(4); Layout.fillWidth: true }
+            Line { text: "FOCUS"; color: root.strictness === "lockdown" ? root.tone : Color.menu.text; font.pixelSize: Style.font.title; font.weight: Font.Bold; font.letterSpacing: Style.space(4); Layout.fillWidth: true }
             Line { text: "[ " + (root.snapshot.setup ? root.rank.toUpperCase() + " · " : "") + root.status.toUpperCase() + " ]"; color: root.snapshot.locked && root.snapshot.setup ? root.tone : Color.muted; font.pixelSize: Style.font.bodySmall; font.letterSpacing: Style.space(1) }
           }
           Rectangle {
@@ -240,6 +241,47 @@ Item {
               height: parent.height; color: root.tone
               width: parent.width * (root.snapshot.total ? (root.snapshot.completed || 0) / root.snapshot.total : 0)
               Behavior on width { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
+            }
+          }
+
+          // How strict Focus is today, as a level you can click. It goes up any time; down only before the day starts.
+          RowLayout {
+            visible: !!root.snapshot.setup
+            Layout.fillWidth: true
+            Layout.topMargin: -Style.space(6)
+            spacing: Style.space(6)
+            Repeater {
+              model: root.levels
+              delegate: Item {
+                id: step
+                required property string modelData
+                required property int index
+                readonly property int current: root.levels.indexOf(root.strictness)
+                readonly property bool reachable: !root.snapshot.started || index >= current
+                Layout.fillWidth: true
+                implicitHeight: stepLabel.implicitHeight + Style.space(12)
+                Rectangle {
+                  anchors { left: parent.left; right: parent.right; top: parent.top }
+                  height: Math.max(2, Style.space(3))
+                  color: step.index <= step.current ? root.tone : Util.alpha(Color.menu.text, stepArea.containsMouse && step.reachable ? 0.35 : 0.12)
+                  Behavior on color { ColorAnimation { duration: 160 } }
+                }
+                Line {
+                  id: stepLabel
+                  anchors { left: parent.left; bottom: parent.bottom }
+                  text: step.modelData.toUpperCase()
+                  color: step.index === step.current ? root.tone : stepArea.containsMouse && step.reachable ? Color.menu.text : Color.muted
+                  opacity: step.reachable ? 1 : 0.35
+                  font.pixelSize: Style.font.caption; font.letterSpacing: Style.space(2); font.weight: step.index === step.current ? Font.Bold : Font.Normal
+                }
+                MouseArea {
+                  id: stepArea
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: step.reachable && step.index !== step.current ? Qt.PointingHandCursor : Qt.ArrowCursor
+                  onClicked: if (step.index !== step.current) root.service.send({op: "settings", values: {strictness: step.modelData}})
+                }
+              }
             }
           }
 
@@ -407,6 +449,11 @@ Item {
               Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { submit(); event.accepted = true }
                 else if (event.key === Qt.Key_Escape) { root.service.close(); event.accepted = true }
+                else if ((event.key === Qt.Key_Right || event.key === Qt.Key_Left) && (event.modifiers & Qt.ControlModifier) && root.snapshot.setup) {
+                  var next = root.levels[root.levels.indexOf(root.strictness) + (event.key === Qt.Key_Right ? 1 : -1)]
+                  if (next) root.service.send({op: "settings", values: {strictness: next}})
+                  event.accepted = true
+                }
                 else if (event.key === Qt.Key_Tab) { if (!text && root.chat.suggestion) text = root.chat.suggestion; event.accepted = true }
                 else if (event.key === Qt.Key_Up && !text) {
                   var said = (root.chat.messages || []).filter(function(m) { return m.role === "user" })
