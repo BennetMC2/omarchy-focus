@@ -444,6 +444,12 @@ Item {
         text: root.backend.ok === false ? root.backend.error : (root.backend.label || "") + (root.backend.auto ? " · the agent Omarchy is set to" : "")
         color: root.backend.ok === false ? Color.urgent : root.dim; font.pixelSize: Style.font.caption
       }
+      Line {
+        visible: !!root.backend.note
+        Layout.fillWidth: true; wrapMode: Text.Wrap
+        text: root.backend.note || ""
+        color: root.dim; font.pixelSize: Style.font.caption
+      }
       // Cost is the model: one click for the cheap one. Other agents list theirs with /models.
       RowLayout {
         visible: root.backend.provider === "claude"

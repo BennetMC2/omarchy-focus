@@ -14,7 +14,7 @@ DEFAULTS = {'reset': '04:00', 'mode': 'all', 'minutes': 15, 'sites': [], 'apps':
             # Where the agent runs, and the folders it may read. Only the user changes these, never the agent.
             # provider "auto" follows the agent chosen for Omarchy itself (omarchy default agent).
             'provider': 'auto', 'model': '', 'endpoint': 'http://127.0.0.1:11434', 'roots': []}
-PROVIDERS = ('auto', 'claude', 'codex', 'opencode', 'ollama')
+PROVIDERS = ('auto', 'claude', 'codex', 'ollama')
 
 def endpoint(value):
     """A plain http(s) address for a model server: no credentials, no query, nothing surprising."""
@@ -70,6 +70,8 @@ class Model:
             try: self.s['settings']['roots'] = [folder(old)]
             except ValueError: pass
         self.s['settings'].pop('agent', None)
+        # An agent Focus no longer drives falls back to following Omarchy's choice.
+        if self.s['settings']['provider'] not in PROVIDERS: self.s['settings'].update(provider='auto', model='')
         # States from before first-run setup existed are already set up.
         self.s.setdefault('setup', True)
 
@@ -298,7 +300,7 @@ class Model:
                 elif key in ('borders', 'strip', 'sound'):
                     if type(value) is not bool: raise ValueError('That setting is on or off.')
                 elif key == 'provider':
-                    if value not in PROVIDERS: raise ValueError('Choose auto, claude, codex, opencode or ollama.')
+                    if value not in PROVIDERS: raise ValueError('Choose auto, claude, codex or ollama.')
                 elif key == 'model':
                     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9._:/-]{0,100}', value): raise ValueError('A model id is letters, digits and . _ : / - only.')
                 elif key == 'endpoint':

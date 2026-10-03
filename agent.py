@@ -9,6 +9,7 @@ import subprocess
 import time
 
 import common
+import netgate
 from common import one_line
 
 PERSONA = '''You are Focus, the gatekeeper built into the user's Omarchy desktop. Each day they tell you what has to get done. Until you have passed those tasks, the websites and apps that distract them stay blocked. You are the only interface: there are no buttons or forms, only this conversation on a small prompt card that also shows their task list live.
@@ -85,7 +86,7 @@ def environment(settings, token):
     return env
 
 # The coding agents Focus can drive. Each brings its own sign-in; Focus only attaches its tools.
-AGENTS = ('claude', 'codex', 'opencode')
+AGENTS = ('claude', 'codex')
 
 def binary(name='claude'):
     """The real program for an agent, wherever Omarchy or its own installer put it. Omarchy's install stubs do not count."""
@@ -118,13 +119,13 @@ def available():
     if os.environ.get('FOCUS_AGENT_CMD'): return 'test'
     return next((name for name in AGENTS if binary(name)), '')
 
-def jail(program, private, scratch):
+def jail(program, private, scratch, network=True):
     """Run an agent that keeps tools of its own where they have nothing to find: it sees its program, its own
     sign-in files, an empty scratch folder and Focus's tool socket. Not the home directory, not the projects."""
     bwrap = shutil.which('bwrap')
     if not bwrap: raise OSError('This agent needs bubblewrap (the bwrap command) so Focus can keep it away from your files.')
     home = str(Path.home())
-    command = [bwrap, '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup', '--die-with-parent', '--new-session',
+    command = [bwrap] + ([] if network else ['--unshare-net']) + ['--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup', '--die-with-parent', '--new-session',
                '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
                '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', '--tmpfs', home]
     for path in ('/etc/resolv.conf', '/etc/ssl', '/etc/ca-certificates', '/etc/hosts', '/etc/passwd', '/etc/nsswitch.conf', '/etc/localtime'):
@@ -144,7 +145,18 @@ def jail(program, private, scratch):
 CODEX_OFF = ('shell_tool', 'unified_exec', 'unified_exec_tty', 'apps', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use',
              'hooks', 'image_generation', 'in_app_browser', 'in_app_local_automation', 'multi_agent', 'plugins', 'plugin_sharing', 'remote_plugin',
              'skill_search', 'skill_mcp_dependency_install', 'sleep_tool', 'goals', 'tool_suggest', 'workspace_dependencies', 'view_image')
-OPENCODE_OFF = ('bash', 'edit', 'write', 'read', 'grep', 'glob', 'list', 'patch', 'webfetch', 'websearch', 'task', 'todowrite', 'todoread', 'skill', 'lsp')
+GATES = {}
+
+def gate(kind):
+    """The one way out of the jail for this agent: a checked connection to its own provider."""
+    if kind not in GATES:
+        # In the per-user runtime folder: private to this user, gone at logout, and short enough for a socket path.
+        runtime = Path(os.environ.get('XDG_RUNTIME_DIR') or common.STATE)
+        for stale in runtime.glob('focus-gate-%s-*.sock' % kind):
+            # Left behind by a service that was killed: its process is gone.
+            if not Path('/proc/' + stale.stem.rsplit('-', 1)[-1]).exists(): stale.unlink(missing_ok=True)
+        GATES[kind] = netgate.Gate(runtime/('focus-gate-%s-%d.sock' % (kind, os.getpid())), netgate.PROVIDER_HOSTS[kind])
+    return GATES[kind]
 
 def digest(state, now):
     """The state block sent with every message: compact, plain, complete."""
@@ -328,13 +340,16 @@ class Session:
 
 
 class ExecSession(Session):
-    """For agents with no long-running mode (Codex, OpenCode): one jailed process per turn, the conversation carried in the prompt."""
+    """For agents with no long-running mode (Codex): one jailed process per turn, the conversation carried in the prompt."""
     TURN_LIMIT = 300
 
     def __init__(self, host, kind):
         super().__init__(host)
         self.kind = kind
         self.said = []
+        # An image the user approved, to hand over with the next turn (these agents cannot take one from a tool).
+        self.attach = ''
+        self.attached = False
 
     def ensure(self): pass   # nothing to warm: each turn starts its own process
 
@@ -346,18 +361,21 @@ class ExecSession(Session):
         tools = {'FOCUS_STATE_HOME': str(common.STATE), 'FOCUS_SESSION': self.token}
         server = ['/usr/bin/python3', str(common.PLUGIN/'focus.py'), 'mcp']
         env = {key: os.environ[key] for key in ('HOME', 'PATH', 'USER', 'LOGNAME', 'LANG', 'TERM') if key in os.environ}
-        if self.kind == 'codex':
-            command = jail(program, ['~/.codex'], scratch) + [program, 'exec', '--json', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only']
-            for feature in CODEX_OFF: command += ['--disable', feature]
-            command += ['-c', 'mcp_servers.focus.command=%s' % json.dumps(server[0]), '-c', 'mcp_servers.focus.args=%s' % json.dumps(server[1:]),
-                        '-c', 'mcp_servers.focus.env={%s}' % ','.join('%s=%s' % (k, json.dumps(v)) for k, v in tools.items()),
-                        '-c', 'mcp_servers.focus.default_tools_approval_mode="approve"']
-            if settings.get('model'): command += ['-m', settings['model']]
-            return command + ['-'], env, True
-        env['OPENCODE_CONFIG_CONTENT'] = json.dumps({'autoupdate': False, 'share': 'disabled', 'tools': {name: False for name in OPENCODE_OFF},
-            'mcp': {'focus': {'type': 'local', 'command': server, 'environment': tools, 'enabled': True}}})
-        command = jail(program, ['~/.local/share/opencode', '~/.cache/opencode', '~/.local/state/opencode', '~/.config/opencode'], scratch)
-        return command + [program, 'run', '--format', 'json', '--pure'] + (['-m', settings['model']] if settings.get('model') else []), env, False
+        way_out = gate(self.kind)
+        # No network inside the jail. The bridge passes connections to the gate, which only opens ones to the provider.
+        command = jail(program, ['~/.codex'], scratch, network=False) + ['--bind', way_out.path, way_out.path]
+        if self.attach: command += ['--ro-bind', self.attach, self.attach]
+        command += ['/usr/bin/python3', str(common.PLUGIN/'netgate.py'), way_out.path,
+                    program, 'exec', '--json', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only']
+        for feature in CODEX_OFF: command += ['--disable', feature]
+        command += ['-c', 'mcp_servers.focus.command=%s' % json.dumps(server[0]), '-c', 'mcp_servers.focus.args=%s' % json.dumps(server[1:]),
+                    '-c', 'mcp_servers.focus.env={%s}' % ','.join('%s=%s' % (k, json.dumps(v)) for k, v in tools.items()),
+                    '-c', 'mcp_servers.focus.default_tools_approval_mode="approve"',
+                    # Focus's turns are short and tool-driven; deep reasoning only makes each reply slower and dearer.
+                    '-c', 'model_reasoning_effort="low"']
+        if settings.get('model'): command += ['-m', settings['model']]
+        if self.attach: command += ['-i', self.attach]
+        return command + ['-'], env, True
 
     def pump(self):
         if self.busy or not self.queue: return
@@ -377,6 +395,7 @@ class ExecSession(Session):
             self.host.turn_failed('The agent could not start: ' + one_line(exc, 200))
             return
         self.buffer, self.busy, self.last, self.said, self.forget = b'', True, time.time(), [], False
+        self.attached, self.attach = bool(self.attach), ''
         self.host.watch(self.proc.stdout, self.readable)
         self.host.turn_started()
 
@@ -395,6 +414,9 @@ class ExecSession(Session):
         was_busy, failure = self.busy, getattr(self, 'failure', '')
         self.failure = ''
         self.stop()
+        if self.attached:
+            self.attached = False
+            self.host.discard_shot()   # handed over once, then gone
         if was_busy:
             if failure: self.host.turn_failed(failure)
             elif self.said: self.host.turn_finished(self.said[-1])
@@ -420,16 +442,9 @@ def read_event(kind, e):
         if e.get('type') == 'item.completed' and item.get('type') == 'agent_message': return one_line(item.get('text'), 2000), None, ''
         if e.get('type') == 'item.started' and item.get('type') == 'mcp_tool_call': return '', describe(str(item.get('tool') or ''), item.get('arguments')), ''
         if e.get('type') in ('error', 'turn.failed'): return '', None, one_line((e.get('error') or {}).get('message') if isinstance(e.get('error'), dict) else e.get('message') or 'Codex reported an error.', 300)
-        return '', None, ''
-    part = e.get('part') or {}
-    if e.get('type') == 'text': return one_line(part.get('text'), 2000), None, ''
-    if e.get('type') == 'tool_use': return '', describe(str(part.get('tool') or '').removeprefix('focus_'), (part.get('state') or {}).get('input')), ''
-    if e.get('type') == 'error':
-        error = e.get('error') or {}
-        return '', None, one_line(((error.get('data') or {}).get('message') if isinstance(error, dict) else '') or 'OpenCode reported an error.', 300)
     return '', None, ''
 
 def make_session(host):
     kind = resolve(host.model.s['settings'])
-    if kind in ('codex', 'opencode') and not os.environ.get('FOCUS_AGENT_CMD'): return ExecSession(host, kind)
+    if kind == 'codex' and not os.environ.get('FOCUS_AGENT_CMD'): return ExecSession(host, kind)
     return Session(host)

@@ -428,7 +428,7 @@ class AgentChoiceTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.home=Path(self.tmp.name).resolve()
         self.bin=self.home/'tools'; self.bin.mkdir()
-        for name in ('claude','codex','opencode'): self.program(name,'#!/bin/sh\necho real\n')
+        for name in ('claude','codex'): self.program(name,'#!/bin/sh\necho real\n')
         self.patches=[patch.object(agent.Path,'home',return_value=self.home),patch.object(agent.shutil,'which',side_effect=lambda n: str(self.bin/n) if (self.bin/n).exists() else ('/usr/bin/bwrap' if n=='bwrap' else None)),
                       patch.dict(os.environ,{'HOME':str(self.home)})]
         for p in self.patches: p.start()
@@ -441,9 +441,11 @@ class AgentChoiceTests(unittest.TestCase):
     def test_auto_follows_the_agent_chosen_for_omarchy(self):
         self.assertEqual(agent.resolve({'provider':'auto'}),'claude')          # nothing chosen: the first one installed
         self.default('codex'); self.assertEqual(agent.resolve({'provider':'auto'}),'codex')
-        self.default('opencode'); self.assertEqual(agent.resolve({'provider':'auto'}),'opencode')
         self.default('gemini'); self.assertEqual(agent.resolve({'provider':'auto'}),'claude')   # one Focus cannot drive: fall back to one it can
-        self.assertEqual(agent.resolve({'provider':'opencode'}),'opencode')    # an explicit choice wins
+        note=backend.Backend().describe({'provider':'auto','model':'','endpoint':'http://127.0.0.1:11434'})['note']
+        self.assertIn('gemini',note); self.assertIn('using claude',note)
+        self.default('claude'); self.assertEqual(agent.resolve({'provider':'codex'}),'codex')    # an explicit choice wins
+        self.assertEqual(Model({'version':3,'settings':{'provider':'opencode','model':'x/y'},'days':{},'current':'','recovered':False}).s['settings']['provider'],'auto')
     def test_an_install_stub_is_not_an_installed_agent(self):
         self.program('codex','#!/bin/bash\nexport MISE_MINIMUM_RELEASE_AGE=0\nmise use -g --quiet "codex" || exit 1\n')
         self.assertEqual(agent.binary('codex'),''); self.default('codex'); self.assertEqual(agent.resolve({'provider':'auto'}),'claude')
@@ -451,23 +453,30 @@ class AgentChoiceTests(unittest.TestCase):
     def test_agents_with_their_own_tools_only_run_jailed(self):
         class Stub: model=Model()
         with tempfile.TemporaryDirectory() as state, patch.object(common,'STATE',Path(state)), patch.object(common,'SOCKET',Path(state)/'control.sock'):
-            for kind,private in (('codex','.codex'),('opencode','.local/share/opencode')):
-                session=agent.make_session(type('H',(),{'model':Model({'version':3,'settings':{'provider':kind,'model':'small-one'},'days':{},'current':'','recovered':False})})())
-                self.assertIsInstance(session,agent.ExecSession); session.token='tok'
+            session=agent.make_session(type('H',(),{'model':Model({'version':3,'settings':{'provider':'codex','model':'small-one'},'days':{},'current':'','recovered':False})})())
+            self.assertIsInstance(session,agent.ExecSession); session.token='tok'
+            picture=Path(state)/'proof.jpg'; picture.write_bytes(b'x'); session.attach=str(picture)
+            try:
                 command,env,_=session.launch(session.host.model.s['settings'])
                 self.assertEqual(command[0],'/usr/bin/bwrap'); self.assertIn('--unshare-user',command)
+                # No network of its own: the only way out is the gate, reached through the bridge that wraps the agent.
+                self.assertIn('--unshare-net',command); gate=agent.GATES['codex'].path
+                self.assertTrue(gate.startswith(os.environ.get('XDG_RUNTIME_DIR') or state)); self.assertEqual(os.stat(gate).st_mode & 0o777,0o600)
+                self.assertEqual(command[command.index(str(self.bin/'codex'))-2:command.index(str(self.bin/'codex'))],[str(common.PLUGIN/'netgate.py'),gate])
                 # The home directory is replaced by an empty one; only the agent's own sign-in folder is put back.
                 self.assertEqual(command[command.index('--tmpfs',command.index('/tmp'))+1],str(self.home))
                 binds=[command[i+1] for i,word in enumerate(command) if word in ('--bind','--ro-bind')]
-                self.assertIn(str(self.home/private),binds)
+                self.assertIn(str(self.home/'.codex'),binds); self.assertIn(gate,binds); self.assertIn(str(Path(state)/'control.sock'),binds); self.assertIn(str(picture),binds)
                 for hidden in ('.ssh','Projects','.claude','.config/omarchy'): self.assertFalse(any(b==str(self.home/hidden) for b in binds),hidden)
-                self.assertFalse(any(b==str(self.home) for b in binds)); self.assertIn(str(Path(state)/'control.sock'),binds)
-                self.assertIn('small-one',command); self.assertEqual(set(env)-{'OPENCODE_CONFIG_CONTENT'},set(env)&{'HOME','PATH','USER','LOGNAME','LANG','TERM'})
-                if kind=='codex':
-                    for feature in ('shell_tool','unified_exec','multi_agent','browser_use'): self.assertEqual(command[command.index(feature)-1],'--disable')
-                    self.assertIn('mcp_servers.focus.default_tools_approval_mode="approve"',command); self.assertEqual(command[command.index('--sandbox')+1],'read-only')
-                else:
-                    config=json.loads(env['OPENCODE_CONFIG_CONTENT']); self.assertFalse(any(config['tools'].values())); self.assertEqual(config['mcp']['focus']['environment']['FOCUS_SESSION'],'tok')
+                self.assertFalse(any(b==str(self.home) for b in binds))
+                self.assertEqual(command[command.index('-m')+1],'small-one'); self.assertEqual(command[command.index('-i')+1],str(picture))
+                self.assertEqual(set(env),set(env)&{'HOME','PATH','USER','LOGNAME','LANG','TERM'})
+                for feature in ('shell_tool','unified_exec','multi_agent','browser_use'): self.assertEqual(command[command.index(feature)-1],'--disable')
+                self.assertIn('mcp_servers.focus.default_tools_approval_mode="approve"',command); self.assertEqual(command[command.index('--sandbox')+1],'read-only')
+                self.assertIn('model_reasoning_effort="low"',command)
+            finally:
+                for g in agent.GATES.values(): g.close()
+                agent.GATES.clear()
             with patch.object(agent.shutil,'which',side_effect=lambda n: None if n=='bwrap' else str(self.bin/n)):
                 with self.assertRaises(OSError): session.launch(session.host.model.s['settings'])
         with patch.object(agent.shutil,'which',side_effect=lambda n: None if n=='bwrap' else str(self.bin/n)):
@@ -475,6 +484,7 @@ class AgentChoiceTests(unittest.TestCase):
         self.assertIsInstance(agent.make_session(Stub()),agent.Session)   # Claude Code has no tools of its own left, so it runs as before
     def test_a_turn_per_process_agent_runs_a_whole_turn(self):
         # Stands in for an agent with no long-running mode: prints its events and exits. Run without the jail, which the test above covers.
+        self_bin=self.bin
         self.program('codex','#!/bin/sh\ncat >/dev/null\necho \'{"type":"item.started","item":{"type":"mcp_tool_call","tool":"add_tasks","arguments":{}}}\'\necho \'{"type":"item.completed","item":{"type":"agent_message","text":"Two on the list."}}\'\n')
         seen=[]
         class Host:
@@ -487,7 +497,11 @@ class AgentChoiceTests(unittest.TestCase):
             def turn_progress(self,text,activity): seen.append(('progress',text,activity))
             def turn_finished(self,text): seen.append(('finished',text))
             def turn_failed(self,text): seen.append(('failed',text))
-        with tempfile.TemporaryDirectory() as state, patch.object(common,'STATE',Path(state)), patch.object(agent,'jail',return_value=[]):
+        class NoGate:
+            path='/nonexistent/gate'
+        # The jail, the gate and the bridge are covered above; here the stand-in runs bare so the turn logic is what is tested.
+        with tempfile.TemporaryDirectory() as state, patch.object(common,'STATE',Path(state)), patch.object(agent,'jail',return_value=[]), patch.object(agent,'gate',return_value=NoGate()), \
+             patch.object(agent.ExecSession,'launch',lambda self,settings: ([str(self_bin/'codex')],{'PATH':'/usr/bin:/bin'},True)):
             host=Host(); session=agent.make_session(host); session.send('<user>today: two things</user>')
             for _ in range(200):
                 if not session.busy: break
@@ -500,9 +514,38 @@ class AgentChoiceTests(unittest.TestCase):
         self.assertEqual(read('codex',{'type':'item.completed','item':{'type':'agent_message','text':'Added  both.'}}),('Added both.',None,''))
         self.assertEqual(read('codex',{'type':'item.started','item':{'type':'mcp_tool_call','tool':'add_tasks','arguments':{}}}),('','writing the list',''))
         self.assertEqual(read('codex',{'type':'error','message':'boom'})[2],'boom'); self.assertEqual(read('codex',{'type':'turn.started'}),('',None,''))
-        self.assertEqual(read('opencode',{'type':'text','part':{'text':'Done.'}}),('Done.',None,''))
-        self.assertEqual(read('opencode',{'type':'tool_use','part':{'tool':'focus_read_file','state':{'input':{'path':'/x/notes.md'}}}}),('','reading notes.md',''))
-        self.assertIn('free tier',read('opencode',{'type':'error','error':{'data':{'message':"OpenCode's free tier can only be used from within OpenCode"}}})[2])
+
+class GateTests(unittest.TestCase):
+    """A jailed agent's only way out: its own provider, port 443, nothing else."""
+    def test_only_the_provider_is_reachable(self):
+        import netgate
+        allowed=netgate.PROVIDER_HOSTS['codex']
+        for host in ('api.openai.com','chatgpt.com','auth.openai.com','API.OpenAI.com.'): self.assertTrue(netgate.permitted(host,allowed),host)
+        for host in ('example.com','openai.com.evil.net','notopenai.com','evilchatgpt.com','127.0.0.1','localhost',''): self.assertFalse(netgate.permitted(host,allowed),host)
+        upstream=socket.socket(); upstream.bind(('127.0.0.1',0)); upstream.listen(1)
+        def answer():
+            conn,_=upstream.accept(); conn.sendall(b'provider says hi'); conn.close()
+        threading.Thread(target=answer,daemon=True).start()
+        with tempfile.TemporaryDirectory() as tmp:
+            gate=netgate.Gate(Path(tmp)/'gate.sock',allowed)
+            def ask(line):
+                with socket.socket(socket.AF_UNIX) as s:
+                    s.settimeout(5); s.connect(gate.path); s.sendall(line+b'\r\n\r\n'); data=b''
+                    while True:
+                        chunk=s.recv(4096)
+                        if not chunk: break
+                        data+=chunk
+                    return data
+            try:
+                for refused in (b'CONNECT example.com:443 HTTP/1.1',b'CONNECT api.openai.com:22 HTTP/1.1',b'GET http://api.openai.com/ HTTP/1.1',b'CONNECT 169.254.169.254:443 HTTP/1.1',b'garbage'):
+                    self.assertTrue(ask(refused).startswith(b'HTTP/1.1 403'),refused)
+                self.assertEqual(len(gate.refused),5)
+                # An allowed destination is connected and relayed (pointed at a local stand-in for the provider).
+                real=socket.create_connection
+                with patch.object(netgate.socket,'create_connection',side_effect=lambda address,timeout=None: real(upstream.getsockname())) as dial:
+                    self.assertEqual(ask(b'CONNECT api.openai.com:443 HTTP/1.1'),b'HTTP/1.1 200 Connection established\r\n\r\nprovider says hi')
+                    self.assertEqual(dial.call_args[0][0],('api.openai.com',443))
+            finally: gate.close(); upstream.close()
 
 class FakeOllama:
     """Answers the one question Focus asks an Ollama server: what is this model and what can it do."""

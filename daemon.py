@@ -28,7 +28,7 @@ from tools import Tools
 FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time? Pick any below, or type your own."
 # Offered as clickable picks with the first question; anything else can be typed.
 COMMON_SITES = ['youtube.com', 'x.com', 'reddit.com', 'instagram.com', 'facebook.com', 'tiktok.com', 'twitch.tv', 'netflix.com', 'linkedin.com', 'news.ycombinator.com']
-HELP = ('/config shows the agent and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider auto|claude|codex|opencode|ollama · '
+HELP = ('/config shows the agent and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider auto|claude|codex|ollama · '
         '/model NAME (/models lists them; for Claude: haiku is the low-cost one) · /endpoint URL · /forget deletes the conversation and any stored screenshot')
 YES, NO = ('y', 'yes', 'allow', 'ok', 'okay', 'sure', 'do it'), ('n', 'no', 'deny', 'cancel', 'not now', 'stop')
 NO_AGENT = "I need Claude Code to work, and I can't find it. Install it with `omarchy default agent claude`, sign in, then open me again."
@@ -155,9 +155,18 @@ class Daemon:
                 except Exception as exc: self.done.put(('captured', '', one_line(exc, 200) or 'failed'))
             threading.Thread(target=work, daemon=True).start()
         elif kind == 'share':
-            if yes: self.shot = value
-            else: self.discard_shot()
-            self.resume('The user has shared an image as evidence; call view_screenshot now to see it.' if yes else 'The user looked at the image and chose not to share it.')
+            if not yes:
+                self.discard_shot()
+                return self.resume('The user looked at the image and chose not to share it.')
+            self.reconfigure()
+            if isinstance(self.session, agent.ExecSession):
+                # This agent cannot take an image from a tool, so it travels with the message itself.
+                self.session.attach = value
+                self.event('The user has shared an image as evidence. It is attached to this very message as an image you can already see. '
+                           'Do not call view_screenshot or look_at_screen: look at the attached image and judge the task from it.')
+            else:
+                self.shot = value
+                self.event('The user has shared an image as evidence; call view_screenshot now to see it.')
 
     def resume(self, text):
         """Tell the agent what the user decided. After a settings change the old session is gone; the new one hears it."""
@@ -190,10 +199,8 @@ class Daemon:
             if kind == 'claude': return 'Claude models: haiku (lowest cost, fastest) · sonnet (default) · opus (most capable). Set one with /model NAME.'
             if kind == 'codex':
                 listed = read(Path.home()/'.codex/models_cache.json').get('models') or []
-                return 'Codex models: ' + (' · '.join(m.get('slug', '') for m in listed if isinstance(m, dict) and m.get('slug')) or 'none cached; run codex once') + '. Set one with /model NAME.'
-            if kind == 'opencode':
-                listed = common.run([agent.binary('opencode'), 'models'], timeout=20).split()
-                return 'OpenCode models: ' + ' · '.join(listed[:40]) + '. Set one with /model NAME.'
+                rows = ['%s (%s)' % (m['slug'], one_line(m.get('description'), 60).rstrip('.')) for m in listed if isinstance(m, dict) and m.get('slug')]
+                return 'Codex models: ' + (' · '.join(rows) or 'none cached; run codex once') + '. Set one with /model NAME; the ones described as fast or affordable cost least.'
             listed = json.loads(common.run(['curl', '-s', '--max-time', '3', self.model.s['settings']['endpoint'] + '/api/tags'])).get('models') or []
             return 'Ollama models: ' + (' · '.join(m.get('name', '') for m in listed) or 'none pulled') + '. Set one with /model NAME.'
         except Exception as exc: return 'Could not list models: ' + one_line(exc, 120)
@@ -223,7 +230,8 @@ class Daemon:
         if name == 'help': return HELP
         self.reconfigure()
         settings, info = self.model.s['settings'], self.backend.describe(self.model.s['settings'])
-        return 'Model: %s%s · Folders I may read: %s' % (info['label'], '' if info['ok'] else ' (' + info['error'] + ')', ', '.join(settings['roots']) or 'none')
+        return 'Model: %s%s%s · Folders I may read: %s' % (info['label'], '' if info['ok'] else ' (' + info['error'] + ')',
+                                                          ' · ' + info['note'] if info.get('note') else '', ', '.join(settings['roots']) or 'none')
 
     def open_apps(self): return blocking.open_apps()
     def installed_apps(self): return blocking.installed_apps()
@@ -344,7 +352,9 @@ class Daemon:
         elif op == 'tool':
             # A tool call from a session that has since been replaced must not land.
             if cmd.get('session') is not None and cmd.get('session') != self.session.token: raise ValueError('That session has ended.')
-            if cmd.get('name') == 'view_screenshot':
+            if cmd.get('name') == 'view_screenshot' and getattr(self.session, 'attached', False):
+                reply['text'] = 'The approved image is attached to the message you are answering. Look at it there.'
+            elif cmd.get('name') == 'view_screenshot':
                 if not self.shot: raise ValueError('There is no approved screenshot to view.')
                 reply['text'] = 'The screenshot the user approved.'
                 reply['image'] = {'data': base64.b64encode(Path(self.shot).read_bytes()).decode(), 'mime': 'image/png' if self.shot.endswith('.png') else 'image/jpeg'}
@@ -486,6 +496,7 @@ class Daemon:
                         self.tick()
             finally:
                 self.session.stop()
+                for way_out in agent.GATES.values(): way_out.close()
                 self.borders.set(False)
                 try: self.runtime.restore({c['address']: c for c in blocking.clients()})
                 except Exception: pass

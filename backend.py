@@ -1,5 +1,6 @@
 """Which model Focus talks to, where it runs, and what it can do. Checked, not assumed."""
 import json
+from pathlib import Path
 import threading
 import time
 import urllib.request
@@ -38,14 +39,12 @@ def describe_ollama(settings):
     else: info['ok'] = True
     return info
 
-OWNERS = {'codex': "OpenAI's servers", 'opencode': 'the provider OpenCode is signed in to'}
-
 def describe_agent(kind, settings):
-    """Codex or OpenCode: installed coding agents Focus drives inside a jail."""
+    """Codex: an installed coding agent Focus drives inside a jail, with a gate as its only way out."""
     import agent, shutil
     name = settings.get('model') or 'its default model'
-    info = {'provider': kind, 'model': settings.get('model') or '', 'where': 'remote', 'ok': True, 'tools': True, 'vision': False, 'error': '',
-            'label': '%s (%s), on %s' % ('Codex' if kind == 'codex' else 'OpenCode', name, OWNERS[kind])}
+    info = {'provider': kind, 'model': settings.get('model') or '', 'where': 'remote', 'ok': True, 'tools': True, 'vision': True, 'error': '',
+            'label': "Codex (%s), on OpenAI's servers" % name}
     if not agent.binary(kind): info.update(ok=False, error='%s is not installed. Type /provider auto to use the agent Omarchy is set to.' % kind)
     elif not shutil.which('bwrap'): info.update(ok=False, error='%s keeps tools of its own, so Focus only runs it inside a sandbox, and bubblewrap (bwrap) is not installed.' % kind)
     return info
@@ -70,6 +69,11 @@ class Backend:
         if kind != 'ollama':
             self.key, self.info = key, describe_claude(settings) if kind == 'claude' else describe_agent(kind, settings)
             self.info['auto'] = settings['provider'] == 'auto'
+            # If Omarchy is set to an agent Focus cannot drive, say which one it is using instead and why.
+            try: preferred = (Path.home()/'.config/omarchy/defaults/agent').read_text().strip()
+            except OSError: preferred = ''
+            self.info['note'] = ('Omarchy is set to %s, which Focus cannot drive yet, so it is using %s.' % (preferred, kind)
+                                 if self.info['auto'] and preferred and preferred != kind else '')
             return self.info
         if key != self.key:
             self.key, self.at = key, 0
