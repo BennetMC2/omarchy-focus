@@ -21,6 +21,7 @@ from tools import Tools
 
 # The very first thing Focus says is fixed: instant, and never an experiment in phrasing.
 FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time?"
+NO_AGENT = "I need Claude Code to work, and I can't find it. Install it with `omarchy default agent claude`, sign in, then open me again."
 EVENTS = {
     'morning': 'A new day. The card just opened for the morning check-in. Greet them in one line and get to what today holds.',
 }
@@ -95,6 +96,7 @@ class Daemon:
 
     def look(self): return blocking.screenshot()
     def open_apps(self): return blocking.open_apps()
+    def installed_apps(self): return blocking.installed_apps()
     def connect_browser(self): return blocking.browser_connect()
     def suggest(self, text): self.chat.suggestion = one_line(text, 80)
     def install_helper(self):
@@ -130,6 +132,9 @@ class Daemon:
 
     def without_agent(self, text, now):
         """No agent installed: lines become tasks and "start" starts, so the day still works."""
+        if not self.model.s['setup']:
+            self.chat.add('system', NO_AGENT)
+            return
         try:
             if text.lower() in ('start', 'start the day'):
                 self.model.apply({'op': 'start'}, now)
@@ -143,7 +148,10 @@ class Daemon:
 
     def opened(self):
         self.visible = True
-        if not agent.available() or self.session.busy or self.session.queue: return
+        if not agent.available():
+            if not self.model.s['setup'] and (not self.chat.messages or self.chat.messages[-1]['text'] != NO_AGENT): self.chat.add('system', NO_AGENT)
+            return
+        if self.session.busy or self.session.queue: return
         state, greeting = self.model.snapshot(time.time()), ''
         if not state['setup']: greeting = 'first_run'
         elif not state['started'] and not state['recovered']: greeting = 'morning'
@@ -212,7 +220,7 @@ class Daemon:
             write(common.STATE/'state.json', self.model.s)
             self.saved = serialized
         blocked_before = self.runtime.blocked_at
-        self.runtime.reconcile(state, force=force)
+        self.runtime.reconcile(state, force=force, quiet=self.visible)
         if self.runtime.blocked_at != blocked_before: self.blocked(self.runtime.blocked_name)
         self.borders.set(state['locked'] and state['settings']['borders'])
         if self.passed is not None and state['settings']['sound'] and state['completed'] > self.passed:

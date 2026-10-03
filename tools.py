@@ -22,7 +22,7 @@ TOOLS = [
           'basis': {'type': 'string', 'enum': ['evidence', 'claim'], 'description': 'evidence if you inspected it yourself, claim if you judged their account'}}, ['id', 'passed', 'note', 'basis']),
     tool('block', 'Add websites (domains such as youtube.com) and apps (window classes from list_apps) to the blocklist.', {'sites': STRINGS, 'apps': STRINGS}),
     tool('unblock', 'Remove websites or apps from the blocklist. Refused once the day has started.', {'sites': STRINGS, 'apps': STRINGS}),
-    tool('list_apps', 'List the window classes of apps that are open now, for matching an app name to block.'),
+    tool('list_apps', 'List apps to match a name to something blockable: window classes open now, then installed apps as name=class (or name=site for web apps).'),
     tool('set_rules', 'Change the rules. strictness is the mode: honor, standard, hard or lockdown; it can be raised any time but lowered only before the day starts. mode "all": everything unlocks when every task passes; mode "earn": each pass earns minutes. reset is the HH:MM a new day begins. mode, minutes and reset are refused once the day has started.',
          {'strictness': {'type': 'string', 'enum': ['honor', 'standard', 'hard', 'lockdown']}, 'mode': {'type': 'string', 'enum': ['all', 'earn']},
           'minutes': {'type': 'integer'}, 'reset': {'type': 'string'}, 'hosts': {'type': 'boolean'}}),
@@ -120,7 +120,8 @@ class Tools:
         return 'Unblocked. Sites: %s. Apps: %s.' % (', '.join(state['settings']['sites']) or 'none', ', '.join(state['settings']['apps']) or 'none')
 
     def tool_list_apps(self, a):
-        return 'Open window classes: ' + (', '.join(self.host.open_apps()) or 'none')
+        installed = self.host.installed_apps()[:150]
+        return 'Open window classes: %s\nInstalled: %s' % (', '.join(self.host.open_apps()) or 'none', ', '.join('%s=%s' % pair for pair in installed) or 'none found')
 
     def tool_set_rules(self, a):
         values = {k: a[k] for k in ('strictness', 'mode', 'minutes', 'reset', 'hosts') if a.get(k) is not None}

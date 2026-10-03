@@ -39,6 +39,19 @@ def matches(client, settings):
 def open_apps():
     return sorted({c.get('initialClass') or c.get('class') for c in clients()} - {None, ''})
 
+def installed_apps():
+    """Installed desktop apps as (name, window class or site). Web apps are named by the site they open."""
+    found = {}
+    for folder in (Path('/usr/share/applications'), Path.home()/'.local/share/applications'):
+        for entry in sorted(folder.glob('*.desktop')):
+            try: text = entry.read_text(errors='replace')
+            except OSError: continue
+            fields = dict(line.split('=', 1) for line in text.splitlines() if '=' in line and not line.startswith('#'))
+            if fields.get('NoDisplay', '').lower() == 'true' or fields.get('Type', 'Application') != 'Application' or not fields.get('Name'): continue
+            site = re.search(r'https?://([a-z0-9.-]+)', fields.get('Exec', ''))
+            found[fields['Name']] = 'site ' + site[1].removeprefix('www.') if site else fields.get('StartupWMClass') or entry.stem
+    return sorted(found.items())
+
 def extension_id(path):
     # Chromium derives an unpacked extension's id from its absolute path.
     return ''.join(chr(97 + int(c, 16)) for c in hashlib.sha256(str(path).encode()).hexdigest()[:32])
@@ -137,7 +150,7 @@ class Runtime:
             del self.held[address]
             self.save_held()
 
-    def reconcile(self, state, force=False):
+    def reconcile(self, state, force=False, quiet=False):
         now = time.time()
         errors = []
         changed = self.last_locked != state['locked']
@@ -156,7 +169,8 @@ class Runtime:
                             self.save_held()
                         if c.get('pinned'): dispatch(a, pin=True)
                         dispatch(a, PARKING)
-                        if now - self.blocked_at > 2:
+                        # Announce only a fresh attempt: not windows swept up as the lock begins, nor while they are talking to Focus.
+                        if now - self.blocked_at > 2 and not changed and not quiet:
                             self.blocked_at = now
                             self.blocked_name = c.get('initialClass') or c.get('class') or 'App'
             except Exception as exc: errors.append('Apps: ' + str(exc))

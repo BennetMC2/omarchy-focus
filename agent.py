@@ -49,18 +49,32 @@ Modes (focus_state names the current one; the tools enforce it, you set the tone
 
 Rules you enforce
 - After the day starts, rewording or removing a task, or changing the main task, takes 30 seconds to land; say so, and that "cancel" stops it.
-- Blocks cannot be loosened once the day has started. Adding blocks is always fine. To block an app, find its window class with list_apps.
+- Blocks cannot be loosened once the day has started. Adding blocks is always fine. To block an app, look it up with list_apps and use its window class; if list_apps shows it as a site, block that site instead. If it is not listed at all, say you could not find it installed and offer to block its website instead; never guess a class.
 - Emergency unlock: if they need a blocked site now, ask once whether it is needed or wanted. If they insist, call emergency_unlock; a code appears for them to type. Never type or repeat it.
 - If recovery is active, blocking is off until they start the day again.
 
 First run (focus_state says setup is pending)
 - They have already been told what Focus does and asked which sites and apps waste their time. Block what they name, then ask to install the system helper: it needs their password once so the blocks work in every browser.
-- When they agree, call install_blocking_helper and say only that the prompt is up. When the event reports the result, call connect_browser and finish_setup without asking, then say in one line that everything comes back when every task passes, and ask what today holds.
+- When they agree, call install_blocking_helper and say only that the prompt is up. When the event reports the result, call connect_browser and finish_setup without asking, then say in one line that everything comes back when every task passes, that the browser needs a restart to pick up its extension, and ask what today holds.
+- If they ask what something does, tell them straight:
+  - The helper is a small root-owned script at /usr/local/bin/focus-root-helper. It only writes Focus's own policy file for Chromium, Brave and Chrome and one marked block in /etc/hosts, and removes them again. The install also adds a rule so Focus can run that one script later without asking for the password each time. `focusctl recover` removes every block.
+  - Without the helper, blocking relies on the browser extension alone, so another browser gets around it.
+  - connect_browser adds the Focus extension to the Chromium and Brave launch flags and registers a local bridge, so a blocked site shows the task list instead of an error. Nothing leaves this machine except your conversation with the agent itself.
+  - Blocking starts the moment setup finishes and stays on until the day's tasks pass.
 - Skip any step focus_state shows is already done (helper installed, browser connected), and any step they want to skip.'''
+
+def binary():
+    """Claude Code, wherever Omarchy or its own installer put it; the shell's PATH does not always include it."""
+    found = shutil.which('claude')
+    if found: return found
+    for candidate in ('~/.local/share/mise/shims/claude', '~/.local/bin/claude', '~/.claude/local/claude'):
+        path = Path(candidate).expanduser()
+        if path.is_file() and os.access(path, os.X_OK): return str(path)
+    return ''
 
 def available():
     if os.environ.get('FOCUS_AGENT_CMD'): return 'test'
-    return 'claude' if shutil.which('claude') else ''
+    return 'claude' if binary() else ''
 
 def evidence_root(configured=''):
     for candidate in (configured, '~/Projects', '~/Work'):
@@ -133,7 +147,7 @@ class Session:
         override = os.environ.get('FOCUS_AGENT_CMD')
         if override: return [override]
         server = {'command': '/usr/bin/python3', 'args': [str(common.PLUGIN/'focus.py'), 'mcp'], 'env': {'FOCUS_STATE_HOME': str(common.STATE)}}
-        return ['claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
+        return [binary() or 'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
                 '--model', settings.get('model') or 'sonnet', '--no-session-persistence', '--strict-mcp-config',
                 '--mcp-config', json.dumps({'mcpServers': {'focus': server}}), '--setting-sources', '', '--system-prompt', PERSONA,
                 '--add-dir', str(common.STATE/'proof'),

@@ -196,6 +196,7 @@ class HelperTests(unittest.TestCase):
 class Host:
     def __init__(self): self.suggested=''; self.installs=0
     def open_apps(self): return ['discord','foot']
+    def installed_apps(self): return [('Steam','steam'),('YouTube','site youtube.com')]
     def connect_browser(self): return ['chromium']
     def suggest(self,text): self.suggested=text
     def install_helper(self): self.installs+=1; return 'Prompt showing.'
@@ -209,7 +210,7 @@ class ToolTests(unittest.TestCase):
         for definition in TOOLS: self.assertTrue(hasattr(self.tools,'tool_'+definition['name']),definition['name'])
     def test_setup_then_a_whole_day(self):
         self.assertIn('x.com',self.call('block',sites=['YouTube.com','https://x.com/home'],apps=['discord']))
-        self.assertEqual(self.call('list_apps'),'Open window classes: discord, foot')
+        self.assertEqual(self.call('list_apps'),'Open window classes: discord, foot\nInstalled: Steam=steam, YouTube=site youtube.com')
         self.call('set_rules',mode='earn',minutes=20); self.call('install_blocking_helper'); self.assertEqual(self.host.installs,1)
         self.assertFalse(self.state()['locked']); self.call('finish_setup'); self.assertTrue(self.state()['locked'])
         self.call('add_tasks',tasks=[{'text':'Emails','check':'Inbox handled'},{'text':'Call mum'}]); ids=[t['id'] for t in self.state()['tasks']]
@@ -243,6 +244,24 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(blocking.matches({'class':'chrome-m.youtube.com__-Profile_1'},settings))
         self.assertTrue(blocking.matches({'initialClass':'discord'},settings))
         self.assertFalse(blocking.matches({'class':'chrome-notyoutube.com__-Default'},settings))
+    def test_only_a_fresh_attempt_is_announced(self):
+        window={'address':'0xa','class':'discord','initialClass':'discord','pid':7,'workspace':{'name':'1'}}
+        state={'locked':True,'settings':{'sites':[],'apps':['discord'],'hosts':False}}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(common,'STATE',Path(tmp)), patch.object(blocking,'HELPER','/nonexistent/focus-test'), \
+             patch.object(blocking,'clients',return_value=[window]), patch.object(blocking,'dispatch') as move:
+            runtime=blocking.Runtime()
+            runtime.reconcile(state); self.assertEqual(move.call_count,1); self.assertEqual(runtime.blocked_at,0)   # swept up as the lock began
+            runtime.reconcile(state,force=True,quiet=True); self.assertEqual(runtime.blocked_at,0)                  # card is open
+            runtime.reconcile(state,force=True); self.assertGreater(runtime.blocked_at,0); self.assertEqual(runtime.blocked_name,'discord')
+    def test_installed_apps_name_their_class_or_site(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home=Path(tmp); apps=home/'.local/share/applications'; apps.mkdir(parents=True)
+            (apps/'Steam.desktop').write_text('[Desktop Entry]\nType=Application\nName=Steam\nExec=steam %U\nStartupWMClass=steam\n')
+            (apps/'YouTube.desktop').write_text('[Desktop Entry]\nType=Application\nName=YouTube\nExec=omarchy-launch-webapp https://www.youtube.com/\n')
+            (apps/'Hidden.desktop').write_text('[Desktop Entry]\nType=Application\nName=Hidden\nNoDisplay=true\nExec=x\n')
+            with patch.object(blocking.Path,'home',return_value=home):
+                found=dict(blocking.installed_apps())
+            self.assertEqual(found['Steam'],'steam'); self.assertEqual(found['YouTube'],'site youtube.com'); self.assertNotIn('Hidden',found)
     def test_restore_preserves_workspace_pin_and_pid(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(common,'STATE',Path(tmp)):
             runtime=blocking.Runtime(); runtime.held={'0xabc':{'pid':2,'workspace':'3','pinned':True}}
@@ -353,10 +372,25 @@ class ServiceTests(unittest.TestCase):
             if (self.path/'control.sock').exists(): break
             time.sleep(.02)
         self.assertFalse(common.rpc({'op':'snapshot'})['introduced'])
-        common.request({'op':'opened'}); common.request({'op':'opened'})
+        common.request({'op':'opened'}); common.request({'op':'opened'}); common.request({'op':'closed'})
         self.assertTrue(common.rpc({'op':'snapshot'})['introduced'])
         chat=json.loads((self.path/'chat.json').read_text())
         self.assertEqual([m['role'] for m in chat['messages']],['agent']); self.assertIn('Which ones waste your time?',chat['messages'][0]['text'])
+    def test_first_run_without_an_agent_says_so_and_keeps_setup_pending(self):
+        self.tearDown()
+        self.tmp=tempfile.TemporaryDirectory(); self.path=Path(self.tmp.name)
+        env={k:v for k,v in self.env.items() if k!='FOCUS_AGENT_CMD'}
+        env.update(FOCUS_STATE_HOME=self.tmp.name,HOME=self.tmp.name,PATH='/usr/bin')
+        code="import blocking,daemon; blocking.HELPER='/nonexistent/focus-test'; blocking.clients=lambda: []; daemon.serve()"
+        self.proc=subprocess.Popen([sys.executable,'-c',code],env=env,stderr=subprocess.PIPE)
+        self.socket=patch.object(common,'SOCKET',self.path/'control.sock'); self.socket.start()
+        for _ in range(100):
+            if (self.path/'control.sock').exists(): break
+            time.sleep(.02)
+        common.request({'op':'opened'}); common.request({'op':'say','text':'youtube'})
+        s=common.rpc({'op':'snapshot'}); self.assertFalse(s['setup']); self.assertEqual(s['total'],0); self.assertFalse(s['introduced'])
+        chat=json.loads((self.path/'chat.json').read_text())
+        self.assertEqual([m['role'] for m in chat['messages']],['system','user','system']); self.assertIn('Claude Code',chat['messages'][0]['text'])
     def test_emergency_code_never_reaches_the_agent(self):
         focus.say('today: x'); focus.say('start'); common.request({'op':'tool','name':'emergency_unlock','args':{}})
         code=common.rpc({'op':'snapshot'})['challenge']['code']
