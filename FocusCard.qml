@@ -116,11 +116,16 @@ Item {
         meta: (root.snapshot.setup ? root.rank + " · " : "") + root.status
         foreground: root.foreground
         iconComponent: Component {
-          Text {
-            text: root.snapshot.locked && root.snapshot.setup ? "󰌾" : "󰌿"
-            color: root.tone
-            font.family: Style.font.family
-            font.pixelSize: Style.font.display
+          // The same dot as the bar: solid while locked, hollow once you are through.
+          Item {
+            implicitWidth: Style.font.display; implicitHeight: Style.font.display
+            Rectangle {
+              anchors.centerIn: parent
+              width: Style.space(16); height: width; radius: width / 2
+              color: root.snapshot.locked && root.snapshot.setup ? (root.strictness === "lockdown" ? root.tone : root.foreground) : "transparent"
+              border.width: Math.max(2, Style.space(2)); border.color: root.strictness === "lockdown" ? root.tone : root.foreground
+              Behavior on color { ColorAnimation { duration: 200 } }
+            }
           }
         }
       }

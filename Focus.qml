@@ -23,36 +23,20 @@ Panel {
   WidgetButton {
     id: button
     bar: root.bar
-    text: "       " + (root.state.completed || 0) + "/" + (root.state.total || 0)
+    text: "    " + (root.state.completed || 0) + "/" + (root.state.total || 0)
     tooltipText: root.state.setup === false ? "Focus · say hello" : root.state.recovered ? "Focus · recovery, blocking off" : !root.state.started ? "Focus · not started" : root.state.locked ? "Focus · " + ((root.state.total || 0) - (root.state.completed || 0)) + " left" : "Focus · unlocked"
     active: root.opened
     onPressed: {
       if (root.service) root.service.view ? root.service.close() : root.service.openHome(root.screenName)
       else opener.running = true
     }
-    Canvas {
-      id: ring
-      width: 27; height: 27
-      anchors.left: parent.left; anchors.leftMargin: 7; anchors.verticalCenter: parent.verticalCenter
-      property real progress: root.state.total ? root.state.completed / root.state.total : 0
-      onProgressChanged: requestPaint()
-      Connections { target: Color; function onAccentChanged() { ring.requestPaint() } function onMutedChanged() { ring.requestPaint() } }
-      onPaint: {
-        var ctx = getContext("2d")
-        ctx.reset(); ctx.lineWidth = 2
-        ctx.strokeStyle = Color.muted; ctx.beginPath(); ctx.arc(13.5, 13.5, 12, 0, Math.PI * 2); ctx.stroke()
-        ctx.strokeStyle = Color.accent; ctx.beginPath(); ctx.arc(13.5, 13.5, 12, -Math.PI/2, -Math.PI/2 + progress * Math.PI * 2); ctx.stroke()
-      }
-      Text {
-        anchors.centerIn: parent
-        text: root.state.locked ? "󰌾" : "󰌿"
-        color: Color.accent
-        font.family: Style.font.family; font.pixelSize: 15
-        rotation: root.state.locked ? 0 : -12
-        Behavior on rotation { NumberAnimation { duration: 200 } }
-        scale: root.state.locked ? 1 : 1.12
-        Behavior on scale { NumberAnimation { duration: 200 } }
-      }
+    // One small dot: solid while locked, hollow once you are through.
+    Rectangle {
+      width: Style.space(9); height: width; radius: width / 2
+      anchors.left: parent.left; anchors.leftMargin: Style.space(9); anchors.verticalCenter: parent.verticalCenter
+      color: root.state.locked ? root.barForeground : "transparent"
+      border.width: Math.max(1, Style.space(1.5)); border.color: root.barForeground
+      Behavior on color { ColorAnimation { duration: 200 } }
     }
   }
 
