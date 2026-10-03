@@ -189,7 +189,7 @@ class Daemon:
             self.links.clear()
             self.discard_shot()
             self.session.forget = True
-            self.chat.add('system', 'Now running on %s. It starts fresh: nothing said to the previous one was passed on.' % self.info()['label'])
+            self.chat.add('system', 'Now on %s. Fresh start: the earlier conversation was not passed on.' % self.info()['label'])
         if was_busy: self.turn_failed('Settings changed mid-reply, so that reply was dropped. Say it again.')
 
     def models(self):

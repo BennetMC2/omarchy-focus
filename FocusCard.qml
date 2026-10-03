@@ -288,6 +288,9 @@ Item {
             font.pixelSize: modelData.role === "user" || !newest ? Style.font.caption : Style.font.body
             color: newest && modelData.role !== "user" ? root.foreground : root.dim
             lineHeight: 1.15
+            // Older lines are context, not content: two lines at most, so the panel stays short.
+            maximumLineCount: newest ? 12 : 2
+            elide: Text.ElideRight
           }
         }
         Line {
