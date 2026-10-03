@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 HANDOVER.md
+SECURITY-HANDOFF.md
+CLAUDE-FIX-NOTE.md

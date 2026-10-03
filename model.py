@@ -1,13 +1,43 @@
 """Local Focus state machine. All mutations are serialized by the service."""
 import copy
 import datetime as dt
+import ipaddress
+from pathlib import Path
+from urllib.parse import urlsplit
 import re
 import secrets
 import string
 import uuid
 
-DEFAULTS = {'reset': '04:00', 'mode': 'all', 'minutes': 15, 'sites': [], 'apps': [], 'hosts': True, 'agent': '', 'evidence': '',
-            'strictness': 'standard', 'borders': True, 'strip': True, 'sound': False}
+DEFAULTS = {'reset': '04:00', 'mode': 'all', 'minutes': 15, 'sites': [], 'apps': [], 'hosts': True,
+            'strictness': 'standard', 'borders': True, 'strip': True, 'sound': False,
+            # Where the agent runs, and the folders it may read. Only the user changes these, never the agent.
+            'provider': 'claude', 'model': '', 'endpoint': 'http://127.0.0.1:11434', 'roots': []}
+PROVIDERS = ('claude', 'ollama')
+
+def endpoint(value):
+    """A plain http(s) address for a model server: no credentials, no query, nothing surprising."""
+    parts = urlsplit(str(value or '').strip())
+    if parts.scheme not in ('http', 'https') or not parts.hostname: raise ValueError('The endpoint must be an http or https address.')
+    if parts.username or parts.password: raise ValueError('Do not put credentials in the endpoint address.')
+    if parts.query or parts.fragment or parts.path not in ('', '/'): raise ValueError('Give just the server address, such as http://127.0.0.1:11434.')
+    return '%s://%s' % (parts.scheme, parts.netloc)
+
+def loopback(value):
+    host = urlsplit(value).hostname or ''
+    if host == 'localhost': return True
+    try: return ipaddress.ip_address(host).is_loopback
+    except ValueError: return False
+
+def folder(value):
+    path = Path(str(value or '')).expanduser()
+    if not path.is_absolute(): raise ValueError('Give the full path of the folder.')
+    try: real = path.resolve(strict=True)
+    except OSError: raise ValueError('That folder does not exist.')
+    if not real.is_dir(): raise ValueError('That is not a folder.')
+    if real == Path(real.anchor) or real == Path.home().resolve() or real in Path.home().resolve().parents:
+        raise ValueError('Pick a folder inside your home directory, not all of it.')
+    return str(real)
 # How much proof a pass takes and how far the rules bend, from loosest to tightest.
 LEVELS = ('honor', 'standard', 'hard', 'lockdown')
 
@@ -33,6 +63,12 @@ class Model:
         if self.s.get('version') != 3:
             raise ValueError('Unsupported state version. Recover or restore the backup.')
         self.s['settings'] = {**DEFAULTS, **self.s['settings']}
+        # The single implicit evidence folder became an explicit list the user approves.
+        old = self.s['settings'].pop('evidence', '')
+        if old and not self.s['settings']['roots']:
+            try: self.s['settings']['roots'] = [folder(old)]
+            except ValueError: pass
+        self.s['settings'].pop('agent', None)
         # States from before first-run setup existed are already set up.
         self.s.setdefault('setup', True)
 
@@ -260,10 +296,15 @@ class Model:
                     if d['started'] and LEVELS.index(value) < LEVELS.index(new['strictness']): raise ValueError('You can raise the mode today, but only lower it from tomorrow.')
                 elif key in ('borders', 'strip', 'sound'):
                     if type(value) is not bool: raise ValueError('That setting is on or off.')
-                elif key == 'agent':
-                    if value not in ('', 'claude', 'codex'): raise ValueError('Choose claude, codex, or leave empty for the system default.')
-                elif key == 'evidence':
-                    if not isinstance(value, str) or len(value) > 500 or '\n' in value: raise ValueError('Evidence folder must be one path.')
+                elif key == 'provider':
+                    if value not in PROVIDERS: raise ValueError('Choose claude or ollama.')
+                elif key == 'model':
+                    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9._:/-]{0,100}', value): raise ValueError('A model id is letters, digits and . _ : / - only.')
+                elif key == 'endpoint':
+                    value = endpoint(value)
+                elif key == 'roots':
+                    if not isinstance(value, list) or len(value) > 10: raise ValueError('At most 10 folders.')
+                    value = sorted(set(folder(v) for v in value))
                 else: raise ValueError('Unknown setting.')
                 # Blocklists remain adjustable, but relaxing them is part of the morning ritual.
                 if d['started'] and ((key in ('sites','apps') and not set(new[key]).issubset(value)) or (key == 'hosts' and new[key] and not value)):

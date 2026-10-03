@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import time
 
 import common
@@ -86,13 +87,29 @@ def browser_connect():
     return done
 
 def screenshot():
-    """Capture the focused monitor for the agent to look at. Keeps the last few."""
+    """Capture the focused monitor. Only called after the user agreed, and nothing sees it until they approve the image too."""
     folder = common.STATE/'proof'
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     monitor = next((m['name'] for m in json.loads(run(['hyprctl', '-j', 'monitors'])) if m.get('focused')), None)
-    path = folder/('screen-%d.png' % int(time.time()))
-    run(['grim'] + (['-o', monitor] if monitor else []) + [str(path)], timeout=10)
-    for old in sorted(folder.glob('screen-*.png'))[:-5]: old.unlink()
+    for old in folder.glob('screen-*'): old.unlink()  # one at a time, never a collection
+    path = folder/('screen-%d.jpg' % int(time.time()))
+    run(['grim', '-t', 'jpeg', '-q', '80'] + (['-o', monitor] if monitor else []) + [str(path)], timeout=10)
+    path.chmod(0o600)
+    return str(path)
+
+def clipboard_image():
+    """The image on the clipboard, saved for the user to look at before it goes anywhere. None if there is no image."""
+    kinds = run(['wl-paste', '--list-types'], timeout=3).split()
+    kind = next((k for k in ('image/png', 'image/jpeg') if k in kinds), None)
+    if not kind: return None
+    data = subprocess.run(['wl-paste', '--type', kind], capture_output=True, timeout=5).stdout
+    if not data or len(data) > 12_000_000: raise ValueError('That image is too large to send (over 12 MB).')
+    folder = common.STATE/'proof'
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for old in folder.glob('screen-*'): old.unlink()
+    path = folder/('screen-%d.%s' % (int(time.time()), 'png' if kind == 'image/png' else 'jpg'))
+    path.write_bytes(data)
+    path.chmod(0o600)
     return str(path)
 
 class Borders:

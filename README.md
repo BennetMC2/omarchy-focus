@@ -4,7 +4,7 @@ Tell it your day. Earn your distractions back.
 
 Omarchy Focus is an Omarchy shell plugin. Each morning you say what has to get done; until those tasks pass review, the websites and apps that pull you off course stay blocked. There are no forms or buttons. You talk to one agent on one small card, and it runs everything through tools: the task list, the blocklist, the reviews, the rules.
 
-Everything is local. The agent is your own Claude Code, run in the background with read-only access to your projects folder so it can check work for itself.
+Your tasks, history and settings stay in files on your machine. The agent does not: by default it is Claude, running on Anthropic's servers, so what you type and any evidence you let it look at is sent there. See [Privacy](#privacy).
 
 ## Using it
 
@@ -58,12 +58,41 @@ omarchy restart shell
 
 Then click the Focus icon in the bar. It walks you through the rest, including the one password prompt for system-wide website blocking.
 
+## Privacy
+
+- **On this machine:** tasks, verdicts, history, settings and the blocklist (`~/.local/state/local.focus/`).
+- **Sent to the model:** everything in the conversation. That means what you type, your task list, and the contents of any file, git view, link or screenshot you let the agent look at. With the default provider that goes to Anthropic. Focus tells you this before your first message.
+- **What the agent can reach:** nothing by default. It has no shell, no file access and no network of its own; its only tools are Focus's.
+  - Files and git: only inside folders you approve, one at a time. Keys and credentials (`.env`, `*.pem`, `id_rsa`, `.git/config` and similar) are never readable, even inside an approved folder. Git runs in a read-only sandbox with no network (needs `bwrap`).
+  - Links: only the exact link you approve, only on the public internet, with redirects kept to the same site.
+  - Screenshots: you approve the capture, see the image, and approve sending it. It is shown to the agent once and deleted.
+- **Approving is yours alone.** The agent can ask; it has no tool to grant itself a folder, a link, a provider or a model.
+- `/forget` (or `focusctl forget`) deletes the conversation, approved links and any stored screenshot. The conversation also clears each new day.
+
+### Choosing the model
+
+Type these in the card, or use `focusctl config`; they work even when no model is reachable.
+
+```
+/config                      show the model and approved folders
+/folder ~/Projects           approve a folder   (/folder remove ~/Projects)
+/provider ollama             run on an Ollama server instead of Claude
+/model qwen3:14b             which model (for Claude: sonnet, opus, haiku or a full id)
+/endpoint http://127.0.0.1:11434
+```
+
+With Ollama, Focus asks the server what the model is and can do. A model without tool calling is refused; one without vision cannot be shown screenshots. A server on `127.0.0.1` is only called local if the model itself runs there: Ollama can relay to cloud models, and Focus labels those as remote. If the server or model is unavailable you get an error; Focus never falls back to another provider on its own.
+
+Ollama mode still uses the Claude Code program as the harness, pointed at your server with an empty profile (no cloud login) and its telemetry switched off. Focus does not verify that the harness makes no other network requests, so treat "runs on this machine" as a statement about where the model runs, not a guarantee of an offline workflow.
+
 ## How it fits together
 
 | File | Role |
 |---|---|
 | `model.py` | The day: tasks, verdicts, cooling-off, unlock rules, streaks. Every change goes through it. |
 | `tools.py` | The agent's tools. Thin wrappers over the model, so the agent cannot do what the rules forbid. |
+| `evidence.py` | Everything the agent may look at: approved folders, sandboxed git, approved links. Enforced in code. |
+| `backend.py` | Which model is in use, where it actually runs, and what it can do. |
 | `agent.py` | The agent's instructions and its long-running streaming session. |
 | `daemon.py` | The service: one loop owning state, blocking, the agent and all clients over a user-only Unix socket. Pushes updates; nothing polls. |
 | `mcp.py` | Tool server the agent process talks to; forwards tool calls to the service. |

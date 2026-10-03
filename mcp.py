@@ -1,5 +1,6 @@
 """Model Context Protocol server over stdio: hands the agent's tool calls to the Focus service."""
 import json
+import os
 import sys
 
 import common
@@ -19,7 +20,10 @@ def serve():
                       'serverInfo': {'name': 'focus', 'version': '2.0.0'}}
         elif method == 'tools/list': result = {'tools': TOOLS}
         elif method == 'tools/call':
-            try: result = {'content': [{'type': 'text', 'text': common.request({'op': 'tool', 'name': params.get('name'), 'args': params.get('arguments') or {}}, timeout=30)['text']}]}
+            try:
+                reply = common.request({'op': 'tool', 'name': params.get('name'), 'args': params.get('arguments') or {}, 'session': os.environ.get('FOCUS_SESSION', '')}, timeout=30)
+                result = {'content': [{'type': 'text', 'text': reply['text']}]}
+                if reply.get('image'): result['content'].append({'type': 'image', 'data': reply['image']['data'], 'mimeType': reply['image']['mime']})
             except (ValueError, OSError) as exc: result = {'content': [{'type': 'text', 'text': 'Refused: ' + str(exc)}], 'isError': True}
         else: result = {}
         send({'jsonrpc': '2.0', 'id': ident, 'result': result})

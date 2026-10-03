@@ -17,6 +17,12 @@ import blocking
 import common
 import focus
 from tools import Tools, TOOLS
+import agent
+import backend
+import evidence
+import http.server
+import shutil
+import threading
 
 class StateTests(unittest.TestCase):
     def setUp(self):
@@ -194,7 +200,10 @@ class HelperTests(unittest.TestCase):
                 self.assertFalse(p.exists())
 
 class Host:
-    def __init__(self): self.suggested=''; self.installs=0
+    def __init__(self): self.suggested=''; self.installs=0; self.asked=[]; self.links=set()
+    def ask(self,kind,value): self.asked.append((kind,value)); return 'Asked.'
+    def link_allowed(self,url): return url in self.links
+    def shared_screenshot(self): raise ValueError('There is no approved screenshot to view.')
     def open_apps(self): return ['discord','foot']
     def installed_apps(self): return [('Steam','steam'),('YouTube','site youtube.com')]
     def connect_browser(self): return ['chromium']
@@ -295,12 +304,201 @@ class RuntimeTests(unittest.TestCase):
         # Pinned so a change to the derivation is noticed; the formula was checked against an id Chromium assigned.
         self.assertEqual(blocking.extension_id('/home/user/.config/omarchy/plugins/local.focus/browser'),'ddlcfpcpogihbkdojjfgljoapmdeomeg')
 
+class EvidenceTests(unittest.TestCase):
+    """The limits on what the agent can see are enforced in code. These attack them directly."""
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory(); base=Path(self.tmp.name).resolve()
+        self.root=base/'projects'; self.outside=base/'private'; self.root.mkdir(); self.outside.mkdir()
+        (self.root/'app').mkdir(); (self.root/'app/main.py').write_text('print("shipping")\n')
+        (self.root/'app/.env').write_text('API_KEY=synthetic-secret\n'); (self.root/'app/id_rsa').write_text('synthetic key\n')
+        (self.outside/'diary.txt').write_text('synthetic private note\n')
+        (self.root/'app/escape').symlink_to(self.outside/'diary.txt'); (self.root/'door').symlink_to(self.outside)
+        self.roots=[self.root]
+    def tearDown(self): self.tmp.cleanup()
+    def refused(self,call,*args,**kwargs):
+        with self.assertRaises(evidence.Refused): call(*args,**kwargs)
+    def test_nothing_is_readable_until_a_folder_is_approved(self):
+        self.refused(evidence.read_file,str(self.root/'app/main.py'),[])
+        self.assertEqual(evidence.approved({'roots':[str(self.root),'/nonexistent/x']}),[self.root])
+    def test_reads_stay_inside_approved_folders(self):
+        self.assertIn('shipping',evidence.read_file('app/main.py',self.roots)); self.assertIn('shipping',evidence.read_file(str(self.root/'app/main.py'),self.roots))
+        for path in (str(self.outside/'diary.txt'),str(self.root/'../private/diary.txt'),'app/escape','door/diary.txt','/etc/passwd','~/.ssh/id_ed25519'):
+            self.refused(evidence.read_file,path,self.roots)
+        self.refused(evidence.list_files,'door',self.roots); self.refused(evidence.list_files,'..',self.roots)
+    def test_credentials_are_never_readable_even_inside(self):
+        for path in ('app/.env','app/id_rsa'): self.refused(evidence.read_file,path,self.roots)
+        (self.root/'app/.git').mkdir(); (self.root/'app/.git/config').write_text('[remote]\nurl=https://token@host/x\n')
+        self.refused(evidence.read_file,'app/.git/config',self.roots)
+        listing=evidence.list_files('app',self.roots); self.assertIn('main.py',listing); self.assertNotIn('.env',listing); self.assertNotIn('id_rsa',listing)
+        for name in ('.env.production','prod.pem','server.key','.npmrc','aws-credentials.json','secrets.yaml','terraform.tfstate'): self.assertTrue(evidence.is_secret(Path('x')/name),name)
+        for name in ('main.py','README.md','environment.md','keyboard.py'): self.assertFalse(evidence.is_secret(Path('x')/name),name)
+    def test_search_skips_secrets_and_escaping_links(self):
+        self.assertIn('main.py:1',evidence.search_files('shipping','.',self.roots))
+        self.assertEqual(evidence.search_files('synthetic','.',self.roots),'No matches.')
+    def git(self,*args):
+        env={'PATH':'/usr/bin:/bin','HOME':self.tmp.name,'GIT_CONFIG_GLOBAL':'/dev/null','GIT_CONFIG_SYSTEM':'/dev/null'}
+        subprocess.run(['git','-C',str(self.root/'app'),'-c','user.name=t','-c','user.email=t@t.invalid',*args],check=True,capture_output=True,env=env)
+    @unittest.skipUnless(shutil.which('bwrap') and shutil.which('git'),'needs bubblewrap and git')
+    def test_git_evidence_cannot_write_or_run_anything(self):
+        repo=self.root/'app'; inside=repo/'canary-inside'; outside=self.outside/'canary-outside'
+        marker=repo/'evil.sh'; marker.write_text('#!/bin/sh\ntouch %s %s 2>/dev/null\ncat "$1" 2>/dev/null\n' % (inside,outside)); marker.chmod(0o755)
+        self.git('init','-q'); (repo/'.gitattributes').write_text('*.py diff=evil filter=evil\n'); (repo/'.gitignore').write_text('canary-*\n')
+        self.git('add','main.py','.gitattributes','.gitignore','.env'); self.git('commit','-q','-m','first')
+        # Every executable hook a repository can configure for the four views we offer.
+        for key in ('diff.evil.textconv','diff.evil.command','diff.external','core.fsmonitor','filter.evil.clean','filter.evil.smudge','core.pager','core.sshCommand'):
+            self.git('config',key,str(marker))
+        (repo/'main.py').write_text('print("shipping more")\n')
+        self.assertIn('main.py',evidence.git('app','status',self.roots)); self.assertIn('first',evidence.git('app','log',self.roots,limit=5))
+        diff=evidence.git('app','diff',self.roots); self.assertIn('shipping more',diff)
+        shown=evidence.git('app','show',self.roots,ref='HEAD'); self.assertIn('first',shown); self.assertIn('main.py',shown)
+        self.assertNotIn('synthetic-secret',shown+diff)  # a committed .env stays out of the output
+        self.assertFalse(inside.exists()); self.assertFalse(outside.exists())
+        # No caller-supplied option ever reaches git.
+        for ref in ('--output='+str(outside),'-p','HEAD --output=x','HEAD:.env','$(touch x)','a..b..c'):
+            self.refused(evidence.git,'app','show',self.roots,ref=ref)
+        self.refused(evidence.git,'app','push',self.roots); self.refused(evidence.git,'app','diff',self.roots,path='../../private')
+        self.refused(evidence.git,str(self.outside),'status',self.roots)
+        self.assertFalse(inside.exists()); self.assertFalse(outside.exists())
+    def test_links_must_be_public_and_approved(self):
+        for url in ('file:///etc/passwd','ftp://example.com/x','https://user:pw@example.com/','javascript:alert(1)',''): self.refused(evidence.check_url,url)
+        for host in ('127.0.0.1','localhost','10.0.0.5','192.168.1.1','169.254.169.254','::1','0.0.0.0'): self.refused(evidence.public_address,host,80)
+        self.refused(evidence.fetch,'https://example.com/page',lambda url: False)
+    def test_redirects_are_checked_and_cannot_leave_the_site(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self,*a): pass
+            def do_GET(self):
+                if self.path=='/hop': self.send_response(302); self.send_header('Location','/landed'); self.end_headers()
+                elif self.path=='/away': self.send_response(302); self.send_header('Location','http://elsewhere.invalid/steal?d=1'); self.end_headers()
+                else:
+                    body=b'<html><script>x</script><p>proof of work</p></html>'
+                    self.send_response(200); self.send_header('Content-Type','text/html'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+        server=http.server.HTTPServer(('127.0.0.1',0),Handler); threading.Thread(target=server.serve_forever,daemon=True).start()
+        port=server.server_address[1]
+        try:
+            # The real address check refuses loopback (tested above); here it is pinned to the test server to exercise redirects.
+            with patch.object(evidence,'public_address',return_value='127.0.0.1'):
+                page=evidence.fetch('http://site.invalid:%d/hop' % port,lambda url: True)
+                self.assertIn('proof of work',page); self.assertNotIn('script',page)
+                self.refused(evidence.fetch,'http://site.invalid:%d/away' % port,lambda url: True)
+        finally: server.shutdown(); server.server_close()
+
+class ConfigTests(unittest.TestCase):
+    def test_the_agent_has_no_tool_for_what_only_the_user_may_change(self):
+        for definition in TOOLS:
+            fields=set(definition['inputSchema']['properties'])
+            self.assertFalse(fields & {'roots','provider','endpoint','model'},definition['name'])
+        m=Model(); tools=Tools(m,Host()); now=time.time()
+        with tempfile.TemporaryDirectory(dir=Path.home()) as inside:
+            self.assertEqual(tools.call('request_folder',{'path':inside},now),'Asked.'); self.assertEqual(m.s['settings']['roots'],[])
+            self.assertEqual(tools.host.asked,[('folder',str(Path(inside).resolve()))])
+        for path in ('/',str(Path.home()),'/nonexistent/place','relative'):
+            with self.assertRaises(ValueError): tools.call('request_folder',{'path':path},now)
+        with self.assertRaises(ValueError): tools.call('read_file',{'path':'/etc/passwd'},now)
+        self.assertEqual(tools.call('open_link',{'url':'https://example.com/a'},now),'Asked.'); self.assertEqual(tools.host.asked[-1],('link','https://example.com/a'))
+        with self.assertRaises(ValueError): tools.call('open_link',{'url':'file:///etc/passwd'},now)
+    def test_settings_are_validated_and_old_state_migrates(self):
+        m=Model(); now=time.time(); change=lambda **v: m.apply({'op':'settings','values':v},now)
+        change(provider='ollama',model='qwen3:8b',endpoint='http://localhost:11434/')
+        self.assertEqual(m.s['settings']['endpoint'],'http://localhost:11434')
+        for bad in ({'provider':'openai'},{'model':'x; rm -rf'},{'endpoint':'http://user:pw@host:1'},{'endpoint':'file:///x'},{'endpoint':'http://h/v1?key=1'},{'roots':['/']},{'roots':[str(Path.home())]}):
+            with self.assertRaises(ValueError): change(**bad)
+        with tempfile.TemporaryDirectory(dir=Path.home()) as inside:
+            old=Model({'version':3,'settings':{'evidence':inside,'agent':'claude','sites':['x.com']},'days':{},'current':'','recovered':False})
+            self.assertEqual(old.s['settings']['roots'],[str(Path(inside).resolve())]); self.assertEqual(old.s['settings']['provider'],'claude')
+            self.assertEqual(old.s['settings']['sites'],['x.com']); self.assertNotIn('evidence',old.s['settings']); self.assertNotIn('agent',old.s['settings'])
+    def test_the_agent_process_gets_no_tools_of_its_own_and_no_stray_secrets(self):
+        class Stub: model=Model()
+        session=agent.Session(Stub()); session.token='t'
+        with patch.dict(os.environ,{'AWS_SECRET_ACCESS_KEY':'synthetic','GITHUB_TOKEN':'synthetic','ANTHROPIC_API_KEY':'synthetic'}), patch.object(agent,'binary',return_value='claude'), patch.dict(os.environ,{},clear=False):
+            os.environ.pop('FOCUS_AGENT_CMD',None)
+            command=session.command(Stub.model.s['settings'])
+            self.assertEqual(command[command.index('--tools')+1],''); self.assertEqual(command[command.index('--allowedTools')+1:],['mcp__focus'])
+            for word in ('Bash','WebFetch','Read','--add-dir'): self.assertNotIn(word,command)
+            cloud=agent.environment({'provider':'claude','endpoint':'','model':''},'t')
+            self.assertFalse({'AWS_SECRET_ACCESS_KEY','GITHUB_TOKEN','ANTHROPIC_API_KEY'} & set(cloud)); self.assertEqual(cloud['FOCUS_SESSION'],'t')
+            with tempfile.TemporaryDirectory() as tmp, patch.object(common,'STATE',Path(tmp)):
+                local=agent.environment({'provider':'ollama','endpoint':'http://127.0.0.1:11434','model':'m'},'t')
+                self.assertEqual(local['ANTHROPIC_BASE_URL'],'http://127.0.0.1:11434'); self.assertEqual(local['ANTHROPIC_API_KEY'],'')
+                # An empty profile: no cloud login is available for the harness to fall back on.
+                self.assertEqual(local['CLAUDE_CONFIG_DIR'],str(Path(tmp)/'agent-ollama')); self.assertEqual(os.listdir(local['CLAUDE_CONFIG_DIR']),[])
+                self.assertNotIn('GITHUB_TOKEN',local)
+
+class FakeOllama:
+    """Answers the one question Focus asks an Ollama server: what is this model and what can it do."""
+    def __init__(self,**shown):
+        outer=self; self.shown=shown; self.asked=[]
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self,*a): pass
+            def do_POST(self):
+                outer.asked.append((self.path,json.loads(self.rfile.read(int(self.headers['Content-Length'])))))
+                body=json.dumps(outer.shown).encode()
+                self.send_response(200 if outer.shown else 404); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+        self.server=http.server.HTTPServer(('127.0.0.1',0),Handler); threading.Thread(target=self.server.serve_forever,daemon=True).start()
+        self.url='http://127.0.0.1:%d' % self.server.server_address[1]
+    def close(self): self.server.shutdown(); self.server.server_close()
+
+class BackendTests(unittest.TestCase):
+    def describe(self,url,model='qwen3'): return backend.describe_ollama({'endpoint':url,'model':model})
+    def test_local_remote_and_capabilities_are_checked_not_assumed(self):
+        server=FakeOllama(capabilities=['completion','tools'])
+        try:
+            info=self.describe(server.url); self.assertTrue(info['ok']); self.assertEqual(info['where'],'local'); self.assertFalse(info['vision']); self.assertIn('on this machine',info['label'])
+            self.assertEqual(server.asked[0],('/api/show',{'model':'qwen3'}))
+            server.shown={'capabilities':['completion','tools','vision'],'remote_host':'https://ollama.com'}
+            info=self.describe(server.url); self.assertEqual(info['where'],'remote'); self.assertIn('remote',info['label']); self.assertTrue(info['vision'])
+            self.assertEqual(self.describe(server.url,'big-model:cloud')['where'],'remote')
+            server.shown={'capabilities':['completion']}
+            info=self.describe(server.url); self.assertFalse(info['ok']); self.assertIn('cannot call tools',info['error'])
+        finally: server.close()
+    def test_a_missing_server_or_model_is_an_error_never_a_fallback(self):
+        info=self.describe('http://127.0.0.1:9'); self.assertFalse(info['ok']); self.assertIn('not answering',info['error']); self.assertEqual(info['provider'],'ollama')
+        self.assertFalse(self.describe('http://127.0.0.1:9','')['ok'])
+        self.assertEqual(backend.describe_claude({'model':''})['where'],'remote')
+
+class RoutingTests(unittest.TestCase):
+    @unittest.skipUnless(agent.binary(),'needs the Claude Code program')
+    def test_ollama_mode_sends_model_requests_to_the_chosen_server_without_a_cloud_login(self):
+        seen=[]
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self,*a): pass
+            def do_GET(self): self.send_response(404); self.end_headers()
+            def do_POST(self):
+                body=json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+                seen.append((self.path.split('?')[0],self.headers.get('Authorization') or self.headers.get('x-api-key') or '',body.get('model')))
+                events=[('message_start',{'type':'message_start','message':{'id':'m','type':'message','role':'assistant','model':body.get('model'),'content':[],'stop_reason':None,'stop_sequence':None,'usage':{'input_tokens':1,'output_tokens':1}}}),
+                        ('content_block_start',{'type':'content_block_start','index':0,'content_block':{'type':'text','text':''}}),
+                        ('content_block_delta',{'type':'content_block_delta','index':0,'delta':{'type':'text_delta','text':'From the chosen server.'}}),
+                        ('content_block_stop',{'type':'content_block_stop','index':0}),
+                        ('message_delta',{'type':'message_delta','delta':{'stop_reason':'end_turn','stop_sequence':None},'usage':{'output_tokens':5}}),('message_stop',{'type':'message_stop'})]
+                out=''.join('event: %s\ndata: %s\n\n' % (n,json.dumps(d)) for n,d in events).encode()
+                self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.send_header('Content-Length',str(len(out))); self.end_headers(); self.wfile.write(out)
+        server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler); threading.Thread(target=server.serve_forever,daemon=True).start()
+        settings={'provider':'ollama','endpoint':'http://127.0.0.1:%d' % server.server_address[1],'model':'local-test-model'}
+        class Stub: pass
+        with tempfile.TemporaryDirectory() as tmp, patch.object(common,'STATE',Path(tmp)), patch.dict(os.environ,{}):
+            os.environ.pop('FOCUS_AGENT_CMD',None)
+            session=agent.Session(Stub()); session.token='t'
+            proc=subprocess.Popen(session.command(settings),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,cwd=tmp,env=agent.environment(settings,'t'))
+            try:
+                proc.stdin.write(json.dumps({'type':'user','message':{'role':'user','content':[{'type':'text','text':'hello'}]}}).encode()+b'\n'); proc.stdin.flush()
+                result=None; deadline=time.time()+60
+                while time.time()<deadline:
+                    line=proc.stdout.readline()
+                    if not line: break
+                    event=json.loads(line)
+                    if event.get('type')=='result': result=event; break
+            finally:
+                proc.terminate(); proc.wait(timeout=10); proc.stdin.close(); proc.stdout.close(); server.shutdown(); server.server_close()
+        self.assertIsNotNone(result); self.assertEqual(result['result'],'From the chosen server.')
+        # The reply came from the chosen server, named the chosen model, and carried the placeholder token rather than any login.
+        self.assertTrue(seen); self.assertEqual({(path,auth,model) for path,auth,model in seen},{('/v1/messages','Bearer ollama','local-test-model')})
+
 # Speaks the agent's streaming protocol and drives Focus through the same tool op the real tool server uses.
 FAKE_AGENT="""#!/usr/bin/python3
 import json,os,re,socket,sys,time
 def tool(name,**args):
     with socket.socket(socket.AF_UNIX) as s:
-        s.connect(os.environ['FOCUS_STATE_HOME']+'/control.sock'); s.sendall(json.dumps({'op':'tool','name':name,'args':args}).encode()+b'\\n')
+        s.connect(os.environ['FOCUS_STATE_HOME']+'/control.sock'); s.sendall(json.dumps({'op':'tool','name':name,'args':args,'session':os.environ['FOCUS_SESSION']}).encode()+b'\\n')
         return json.loads(s.makefile().readline())
 def out(o): print(json.dumps(o),flush=True); time.sleep(.08)
 for line in sys.stdin:
@@ -312,10 +510,12 @@ for line in sys.stdin:
     elif said.startswith('today'): tool('add_tasks',tasks=[{'text':'Emails','check':'Inbox handled'},{'text':'Call mum'}]); reply='Which matters most?'
     elif said=='start': tool('update_task',id=ids[0],main=True); tool('start_day'); reply='Started.'
     elif said=='unblock youtube': reply='Refused.' if not tool('unblock',sites=['youtube.com'])['ok'] else 'Unblocked.'
+    elif said.startswith('folder '): reply=tool('request_folder',path=said[7:]).get('text','refused')[:5]
+    elif said=='screen': r=tool('look_at_screen'); reply='asked' if r['ok'] else r['error']
     elif said=='done': [tool('record_verdict',id=i,passed=True,note='Fine.',basis='claim') for i in ids]; reply='Unlocked.'
     else: reply='Earlier: '+str('<earlier_today>' in text)
     out({'type':'stream_event','event':{'type':'content_block_delta','delta':{'type':'text_delta','text':reply[:4]}}})
-    out({'type':'assistant','message':{'content':[{'type':'text','text':'Thinking aloud.'},{'type':'tool_use','name':'Read','input':{'file_path':'/x/notes.md'}}]}})
+    out({'type':'assistant','message':{'content':[{'type':'text','text':'Thinking aloud.'},{'type':'tool_use','name':'mcp__focus__read_file','input':{'path':'/x/notes.md'}}]}})
     out({'type':'assistant','message':{'content':[{'type':'text','text':reply}]}})
     out({'type':'result','is_error':False,'result':reply})
 """
@@ -326,12 +526,79 @@ class ServiceTests(unittest.TestCase):
         fake=self.path/'agent'; fake.write_text(FAKE_AGENT); fake.chmod(0o700)
         model=Model(); model.s['setup']=True; model.s['settings']['sites']=['youtube.com']; common.write(self.path/'state.json',model.s)
         self.env={**os.environ,'FOCUS_STATE_HOME':self.tmp.name,'FOCUS_AGENT_CMD':str(fake),'PYTHONPATH':str(Path(focus.__file__).parent)}
-        code="import blocking,daemon; blocking.HELPER='/nonexistent/focus-test'; blocking.clients=lambda: []; daemon.serve()"
+        # The stand-in screenshot writes a file, so a capture that should not have happened is detectable.
+        code=("import blocking,daemon,common; blocking.HELPER='/nonexistent/focus-test'; blocking.clients=lambda: []\n"
+              "def shot():\n p=common.STATE/'proof'; p.mkdir(exist_ok=True); f=p/'screen-1.jpg'; f.write_bytes(b'synthetic image'); return str(f)\n"
+              "def clip():\n p=common.STATE/'proof'; p.mkdir(exist_ok=True); f=p/'screen-2.png'; f.write_bytes(b'synthetic paste'); return str(f)\n"
+              "blocking.screenshot=shot; blocking.clipboard_image=clip; daemon.serve()")
         self.proc=subprocess.Popen([sys.executable,'-c',code],env=self.env,stderr=subprocess.PIPE)
         self.socket=patch.object(common,'SOCKET',self.path/'control.sock'); self.socket.start()
         for _ in range(100):
             if (self.path/'control.sock').exists(): break
             time.sleep(.02)
+    def chat(self): return common.request({'op':'subscribe'})['chat']
+    def until(self,done):
+        for _ in range(200):
+            chat=self.chat()
+            if done(chat): return chat
+            time.sleep(.05)
+        self.fail('Timed out: '+json.dumps(chat)[:400])
+    def test_only_the_user_can_approve_a_folder(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as inside:
+            real=str(Path(inside).resolve()); (Path(real)/'notes.md').write_text('evidence here\n')
+            focus.say('folder '+real); consent=self.chat()['consent']
+            self.assertEqual(consent['kind'],'folder'); self.assertIn(real,consent['text']); self.assertEqual(common.rpc({'op':'snapshot'})['settings']['roots'],[])
+            # Until it is approved, reading inside it is refused and changes nothing.
+            with self.assertRaises(ValueError): common.request({'op':'tool','name':'read_file','args':{'path':real+'/notes.md'}})
+            focus.say('no'); self.until(lambda c: not c['busy'] and not c['consent']); self.assertEqual(common.rpc({'op':'snapshot'})['settings']['roots'],[])
+            focus.say('folder '+real); common.request({'op':'consent','answer':True}); self.until(lambda c: not c['busy'] and not c['consent'])
+            self.assertEqual(common.rpc({'op':'snapshot'})['settings']['roots'],[real])
+            self.assertIn('evidence here',common.request({'op':'tool','name':'read_file','args':{'path':real+'/notes.md'}})['text'])
+            self.assertEqual(json.loads((self.path/'state.json').read_text())['settings']['roots'],[real])
+            focus.say('/folder remove '+real); self.assertEqual(common.rpc({'op':'snapshot'})['settings']['roots'],[])
+    def test_a_screenshot_needs_two_yeses_and_is_seen_once(self):
+        shot=self.path/'proof/screen-1.jpg'; view=lambda: common.request({'op':'tool','name':'view_screenshot','args':{}})
+        focus.say('screen'); self.assertEqual(self.chat()['consent']['kind'],'screen'); self.assertFalse(shot.exists())
+        focus.say('no'); self.until(lambda c: not c['busy'] and not c['consent']); self.assertFalse(shot.exists())  # declined: never captured
+        with self.assertRaises(ValueError): view()
+        focus.say('screen'); common.request({'op':'consent','answer':True})
+        consent=self.until(lambda c: c['consent'] and c['consent']['kind']=='share')['consent']
+        self.assertEqual(consent['preview'],str(shot)); self.assertIn('Anthropic',consent['goes']); self.assertTrue(shot.exists())
+        with self.assertRaises(ValueError): view()   # captured, but not yet approved for sending
+        common.request({'op':'consent','answer':False}); self.until(lambda c: not c['busy'] and not c['consent'])
+        self.assertFalse(shot.exists())
+        with self.assertRaises(ValueError): view()   # looked at and withheld
+        focus.say('screen'); common.request({'op':'consent','answer':True}); self.until(lambda c: c['consent'] and c['consent']['kind']=='share')
+        common.request({'op':'consent','answer':True}); self.until(lambda c: not c['busy'] and not c['consent'])
+        reply=view(); self.assertEqual(reply['image']['mime'],'image/jpeg'); self.assertFalse(shot.exists())
+        with self.assertRaises(ValueError): view()   # once
+    def test_a_pasted_image_is_previewed_and_confirmed_before_it_is_seen(self):
+        pasted=self.path/'proof/screen-2.png'; view=lambda: common.request({'op':'tool','name':'view_screenshot','args':{}})
+        common.request({'op':'paste'}); consent=self.chat()['consent']
+        self.assertEqual((consent['kind'],consent['preview']),('share',str(pasted)))
+        with self.assertRaises(ValueError): view()
+        common.request({'op':'consent','answer':False}); self.assertFalse(pasted.exists())
+        common.request({'op':'paste'}); common.request({'op':'consent','answer':True}); self.until(lambda c: not c['busy'] and not c['consent'])
+        self.assertEqual(view()['image']['mime'],'image/png'); self.assertFalse(pasted.exists())
+    def test_a_replaced_session_cannot_act_and_settings_never_depend_on_the_model(self):
+        focus.say('today: one thing')
+        with self.assertRaises(ValueError): common.request({'op':'tool','name':'add_tasks','args':{'tasks':[{'text':'Injected'}]},'session':'stale-token'})
+        self.assertEqual(common.rpc({'op':'snapshot'})['total'],2)
+        server=FakeOllama(capabilities=['completion','tools'])
+        try:
+            self.assertIn('Model:',focus.say('/provider ollama')); focus.say('/endpoint '+server.url); focus.say('/model qwen3')
+            self.until(lambda c: common.rpc({'op':'snapshot'})['backend']['ok'])
+            state=common.rpc({'op':'snapshot'}); self.assertEqual(state['backend']['where'],'local'); self.assertFalse(state['backend']['vision'])
+            self.assertEqual(focus.say('screen'),'This model cannot see images, so a screenshot would not help. Use another kind of evidence.')
+            self.assertIsNone(self.chat()['consent'])
+            saved=json.loads((self.path/'state.json').read_text())['settings']; self.assertEqual((saved['provider'],saved['model'],saved['endpoint']),('ollama','qwen3',server.url))
+        finally: server.close()
+        # The server is gone: an honest error, no cloud fallback, nothing changes.
+        focus.say('/model other-model'); before=common.rpc({'op':'snapshot'})
+        self.until(lambda c: not common.rpc({'op':'snapshot'})['backend']['ok'] and 'Checking' not in common.rpc({'op':'snapshot'})['backend']['error'])
+        answer=focus.say('today: something else'); self.assertIn('not answering',answer); self.assertIn('/provider claude',answer)
+        after=common.rpc({'op':'snapshot'}); self.assertEqual(after['settings']['provider'],'ollama'); self.assertEqual(after['total'],before['total'])
+        self.assertIn('Forgotten',focus.say('/forget')); self.assertEqual(self.chat()['messages'][-1]['role'],'system'); self.assertEqual(len(self.chat()['messages']),1)
     def tearDown(self):
         self.socket.stop(); self.proc.terminate(); self.proc.wait(timeout=5); self.proc.stderr.close(); self.tmp.cleanup()
     def test_plain_commands_and_restart_safe_state(self):
@@ -378,7 +645,9 @@ class ServiceTests(unittest.TestCase):
         common.request({'op':'opened'}); common.request({'op':'opened'}); common.request({'op':'closed'})
         self.assertTrue(common.rpc({'op':'snapshot'})['introduced'])
         chat=json.loads((self.path/'chat.json').read_text())
-        self.assertEqual([m['role'] for m in chat['messages']],['agent']); self.assertIn('Which ones waste your time?',chat['messages'][0]['text'])
+        self.assertEqual([m['role'] for m in chat['messages']],['system','agent']); self.assertIn('Which ones waste your time?',chat['messages'][1]['text'])
+        # Where the words go is said before anything is typed.
+        self.assertIn('Anthropic',chat['messages'][0]['text']); self.assertIn('stay on this machine',chat['messages'][0]['text'])
         self.assertIn('youtube.com',chat['choices']['options']); self.assertTrue(chat['choices']['multiple'])
         focus.say('youtube.com, reddit.com'); self.assertIsNone(common.request({'op':'subscribe'})['chat']['choices'])
     def test_first_run_without_an_agent_says_so_and_keeps_setup_pending(self):

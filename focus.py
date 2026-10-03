@@ -182,6 +182,9 @@ def main():
     sub = p.add_subparsers(dest='command', required=True)
     for name in ('serve', 'mcp', 'status', 'apps', 'recover', 'effect'): sub.add_parser(name)
     s = sub.add_parser('say', help='say something to the Focus agent'); s.add_argument('text', nargs='+')
+    c = sub.add_parser('config', help='show or change where the agent runs and what it may read')
+    c.add_argument('key', nargs='?', choices=['provider', 'model', 'endpoint', 'folder', 'unfolder']); c.add_argument('value', nargs='?', default='')
+    sub.add_parser('forget', help='delete the conversation and any stored screenshot')
     r = sub.add_parser('rpc'); r.add_argument('payload')
     l = sub.add_parser('list'); l.add_argument('--json', action='store_true')
     v = sub.add_parser('verdict'); v.add_argument('id'); group = v.add_mutually_exclusive_group(required=True); group.add_argument('--pass', dest='passed', action='store_true'); group.add_argument('--fail', action='store_true'); v.add_argument('--note', required=True); v.add_argument('--revision', type=int)
@@ -197,7 +200,18 @@ def main():
         return
     if args.command == 'say':
         print(say(' '.join(args.text))); return
-    if args.command == 'recover': result = recover()
+    if args.command == 'config':
+        # Straight to the service's settings: this works whether or not any model is reachable.
+        if args.key:
+            roots = rpc({'op': 'snapshot'})['settings']['roots']
+            target = str(Path(args.value).expanduser())
+            values = {'roots': roots + [target]} if args.key == 'folder' else {'roots': [r for r in roots if r != target]} if args.key == 'unfolder' else {args.key: args.value}
+            rpc({'op': 'settings', 'values': values})
+            time.sleep(0.2)
+        state = rpc({'op': 'snapshot'})
+        result = {'backend': state['backend'], 'endpoint': state['settings']['endpoint'], 'folders': state['settings']['roots']}
+    elif args.command == 'forget': rpc({'op': 'forget'}); result = 'Forgotten.'
+    elif args.command == 'recover': result = recover()
     elif args.command == 'rpc': result = rpc(json.loads(args.payload))
     elif args.command == 'apps': result = blocking.open_apps()
     elif args.command == 'verdict': result = rpc({'op': 'verdict', 'id': args.id, 'verdict': 'pass' if args.passed else 'fail', 'note': args.note, 'revision': args.revision})

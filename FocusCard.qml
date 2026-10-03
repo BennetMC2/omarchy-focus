@@ -67,6 +67,10 @@ Item {
     var verb = change.action === "delete" ? "Drops" : change.action === "main" ? "Becomes main" : "Rewords"
     return verb + " in " + seconds(change.readyAt) + "s · say cancel to stop it"
   }
+  // Something only you can approve: a folder, a link, a screenshot. The agent can ask; it cannot grant.
+  readonly property string consentKey: JSON.stringify(chat.consent || null)
+  readonly property var consent: JSON.parse(consentKey)
+  readonly property var backend: snapshot.backend || ({label: "", ok: true, error: ""})
   // Clickable answers the agent (or the first-run question) is offering.
   readonly property string choicesKey: JSON.stringify(chat.choices || null)
   readonly property var choices: { var c = JSON.parse(choicesKey); return c ? c.options || [] : [] }
@@ -294,6 +298,49 @@ Item {
         }
       }
 
+      Ui.BorderSurface {
+        visible: !!root.consent
+        Layout.fillWidth: true
+        implicitHeight: asking.implicitHeight + Style.space(20)
+        radius: Style.cornerRadius
+        color: Util.alpha(root.tone, 0.08)
+        borderSpec: Border.flat(Util.alpha(root.tone, 0.45), 1)
+        ColumnLayout {
+          id: asking
+          anchors { left: parent.left; right: parent.right; top: parent.top; margins: Style.space(10) }
+          spacing: Style.space(8)
+          Line { Layout.fillWidth: true; wrapMode: Text.Wrap; text: root.consent ? root.consent.text : "" }
+          Image {
+            // What was captured, shown before anything is sent.
+            visible: !!root.consent && !!root.consent.preview
+            source: root.consent && root.consent.preview ? "file://" + root.consent.preview : ""
+            cache: false; asynchronous: true
+            fillMode: Image.PreserveAspectFit
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? width * 0.56 : 0
+          }
+          Line {
+            Layout.fillWidth: true; wrapMode: Text.Wrap
+            color: root.dim; font.pixelSize: Style.font.caption
+            text: !root.consent ? "" : root.consent.kind === "screen" ? "Nothing is sent yet." : "It will be read by " + root.consent.goes + "."
+          }
+          RowLayout {
+            spacing: Style.spacing.md
+            Ui.Button {
+              text: root.consent && root.consent.kind === "share" ? "Send it" : root.consent && root.consent.kind === "screen" ? "Capture" : "Allow"
+              selected: true; bordered: true; foreground: root.foreground; accent: root.tone; fontSize: Style.font.bodySmall
+              onClicked: root.service.send({op: "consent", answer: true})
+            }
+            Ui.Button {
+              text: root.consent && root.consent.kind === "share" ? "Discard" : "No"
+              bordered: true; foreground: root.foreground; accent: root.tone; fontSize: Style.font.bodySmall
+              onClicked: root.service.send({op: "consent", answer: false})
+            }
+            Line { text: "or type yes / no"; color: root.dim; font.pixelSize: Style.font.caption }
+          }
+        }
+      }
+
       Flow {
         visible: root.choices.length > 0 && !root.chat.busy
         Layout.fillWidth: true
@@ -355,6 +402,10 @@ Item {
               if (next) root.service.send({op: "settings", values: {strictness: next}})
               event.accepted = true
             }
+            else if (event.key === Qt.Key_V && (event.modifiers & Qt.ControlModifier)) {
+              // A picture on the clipboard becomes evidence you confirm before it is sent; text pastes as usual.
+              root.service.send({op: "paste"})
+            }
             else if (event.key === Qt.Key_Tab) { if (!text && root.chat.suggestion) text = root.chat.suggestion; event.accepted = true }
             else if (event.key === Qt.Key_Up && !text) {
               var said = (root.chat.messages || []).filter(function(m) { return m.role === "user" })
@@ -387,10 +438,21 @@ Item {
         color: root.dim; font.pixelSize: Style.font.caption
         wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
       }
+      Ui.PanelSectionHeader { text: "AGENT"; foreground: root.foreground }
+      Line {
+        Layout.fillWidth: true; wrapMode: Text.Wrap
+        text: root.backend.ok === false ? root.backend.error : (root.backend.label || "")
+        color: root.backend.ok === false ? Color.urgent : root.dim; font.pixelSize: Style.font.caption
+      }
+      Line {
+        Layout.fillWidth: true; wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
+        text: (root.snapshot.settings.roots || []).length ? "May read " + root.snapshot.settings.roots.join(" · ") : "No folder approved for it to read yet"
+        color: root.dim; font.pixelSize: Style.font.caption
+      }
       Line {
         Layout.fillWidth: true
         Layout.topMargin: Style.space(2)
-        text: (root.readyToStart && !prompt.text ? "Enter locks in" : root.chat.suggestion && !prompt.text && !root.picked.length ? "Enter accepts" : "Enter sends") + " · Ctrl ←/→ mode · Esc closes"
+        text: (root.readyToStart && !prompt.text ? "Enter locks in" : root.chat.suggestion && !prompt.text && !root.picked.length ? "Enter accepts" : "Enter sends") + " · Ctrl+V pastes a screenshot · /help · Esc closes"
         color: root.dim; font.pixelSize: Style.font.caption; opacity: 0.7
       }
     }

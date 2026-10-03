@@ -3,9 +3,9 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import secrets
 import shutil
 import subprocess
-import tempfile
 import time
 
 import common
@@ -36,7 +36,9 @@ The morning
 
 Reviewing
 - When they say something is done, you are a skeptic, not a cheerleader. A bare "done" or "trust me" never passes.
-- For work that lives on this machine (code, writing, files), look for yourself: Read, Grep and Glob, plus ls and read-only git, under the current directory, which holds their projects. Use `git -C <project> ...`. Verdict basis is "evidence".
+- For work that lives on this machine (code, writing, files), look for yourself with list_files, read_file, search_files and git_evidence. They only work inside folders the user has approved (focus_state lists them). If the work is somewhere else, call request_folder with the folder's path and wait for the event; never ask them to paste a path into a tool for you. Verdict basis is "evidence".
+- They can also paste a picture into the prompt as evidence (a screenshot of a receipt, an inbox, a finished page). When an event says an image was shared, call view_screenshot to see it.
+- You have no shell, no file access and no network beyond those tools. If a tool refuses, that is the boundary: say what you could not see and judge on what you have.
 - For things you cannot see (a call, an errand), a specific, plausible account is enough; if the account is thin, ask one concrete question. Basis is "claim". At most two questions per task, then decide.
 - Pass when reasonably certain the stated task is done; do not demand more than it asked for. Record it with record_verdict. The note is shown to them under the task: one honest, dry line, said to them ("you"), never about them ("they", "their account").
 - When the last task passes, call grade_day with one honest word and a line, and tell them they are unlocked.
@@ -44,7 +46,7 @@ Reviewing
 Modes (focus_state names the current one; the tools enforce it, you set the tone)
 - honor: their word is enough. Take a one-line account and pass it; no questions.
 - standard: as described above.
-- hard: evidence for everything. For things off this machine they must show something: offer to look at their screen (look_at_screen, then Read the image), open a link they give you (WebFetch), or run a timer for time-based tasks (start_timer). Their word alone never passes unless the task was agreed "on their word" before the day started. One emergency unlock a day; changes take two minutes to land. Sound like a drill sergeant who respects them: clipped, no slack.
+- hard: evidence for everything. For things off this machine they must show something: offer to look at their screen (look_at_screen; they approve the capture and then the image, and only then can you call view_screenshot), open a link they give you (open_link; they approve the exact link), or run a timer for time-based tasks (start_timer). Their word alone never passes unless the task was agreed "on their word" before the day started. One emergency unlock a day; changes take two minutes to land. Sound like a drill sergeant who respects them: clipped, no slack.
 - lockdown: hard, and stricter. The main task must pass before any other. No emergency unlock, no changes to the list after the day starts. Sound like a machine: flat, exact, no warmth.
 - They change mode by asking (set_rules strictness). It can be raised any time, lowered only before the day starts. Say so plainly if a tool refuses.
 - Look: borders, the strip and sound are switched with set_look when they ask.
@@ -61,9 +63,26 @@ First run (focus_state says setup is pending)
 - If they ask what something does, tell them straight:
   - The helper is a small root-owned script at /usr/local/bin/focus-root-helper. It only writes Focus's own policy file for Chromium, Brave and Chrome and one marked block in /etc/hosts, and removes them again. The install also adds a rule so Focus can run that one script later without asking for the password each time. `focusctl recover` removes every block.
   - Without the helper, blocking relies on the browser extension alone, so another browser gets around it.
-  - connect_browser adds the Focus extension to the Chromium and Brave launch flags and registers a local bridge, so a blocked site shows the task list instead of an error. Nothing leaves this machine except your conversation with the agent itself.
+  - connect_browser adds the Focus extension to the Chromium and Brave launch flags and registers a local bridge, so a blocked site shows the task list instead of an error.
+  - Privacy, said plainly: tasks, history and settings stay in files on this machine. But you, the agent, run wherever focus_state says under "model". If that is a remote server, everything in this conversation is sent there to be read: what they type, the task list, and any file, link or screenshot they let you look at. Never say that everything is local unless focus_state says the model runs on this machine.
+  - They can type /config to see the model and approved folders, /folder to approve or remove one, /provider and /model to change where you run, and /forget to delete the conversation and any stored screenshot. Those are theirs to use; you cannot change them.
   - Blocking starts the moment setup finishes and stays on until the day's tasks pass.
 - Skip any step focus_state shows is already done (helper installed, browser connected), and any step they want to skip.'''
+
+# The agent process gets these and nothing else from the service's environment: no tokens, no cloud keys.
+PASSED_ENV = ('HOME', 'PATH', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
+              'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'CLAUDE_CONFIG_DIR', 'FOCUS_STATE_HOME')
+
+def environment(settings, token):
+    env = {key: os.environ[key] for key in PASSED_ENV if key in os.environ}
+    env['FOCUS_SESSION'] = token
+    if settings['provider'] == 'ollama':
+        # Point the harness at the chosen server and give it an empty profile, so it holds no cloud login to fall back on.
+        profile = common.STATE/'agent-ollama'
+        profile.mkdir(mode=0o700, parents=True, exist_ok=True)
+        env.update(ANTHROPIC_BASE_URL=settings['endpoint'], ANTHROPIC_AUTH_TOKEN='ollama', ANTHROPIC_API_KEY='', CLAUDE_CONFIG_DIR=str(profile),
+                   DISABLE_TELEMETRY='1', DISABLE_ERROR_REPORTING='1', DISABLE_AUTOUPDATER='1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1')
+    return env
 
 def binary():
     """Claude Code, wherever Omarchy or its own installer put it; the shell's PATH does not always include it."""
@@ -78,11 +97,6 @@ def available():
     if os.environ.get('FOCUS_AGENT_CMD'): return 'test'
     return 'claude' if binary() else ''
 
-def evidence_root(configured=''):
-    for candidate in (configured, '~/Projects', '~/Work'):
-        if candidate and Path(candidate).expanduser().is_dir(): return str(Path(candidate).expanduser())
-    return tempfile.gettempdir()
-
 def digest(state, now):
     """The state block sent with every message: compact, plain, complete."""
     settings = state['settings']
@@ -92,6 +106,9 @@ def digest(state, now):
     until = max(0, int(state.get('until', 0) - now))
     lines.append('day: ' + ('started' if state['started'] else 'not started') + ' · ' +
                  ('locked' if state['locked'] else 'unlocked' + ('' if state['fullUnlock'] or not until else ' for %d more minutes' % (until // 60 + 1))))
+    backend = state.get('backend') or {}
+    lines.append('model: ' + (backend.get('label') or settings['provider']) + (' · it cannot see images' if backend and not backend.get('vision') else ''))
+    lines.append('approved folders: ' + (', '.join(settings.get('roots') or []) or 'none yet'))
     lines.append('mode: ' + settings['strictness'])
     lines.append('rule: ' + ('each pass earns %d minutes' % settings['minutes'] if settings['mode'] == 'earn' else 'everything unlocks when every task passes') + ' · new day at ' + settings['reset'])
     lines.append('blocked sites: ' + (', '.join(settings['sites']) or 'none') + ' · blocked apps: ' + (', '.join(settings['apps']) or 'none'))
@@ -121,13 +138,14 @@ def digest(state, now):
 def describe(name, args):
     """A few words about what the agent is doing, for the activity line."""
     args = args if isinstance(args, dict) else {}
-    if name == 'Read': return 'reading ' + Path(str(args.get('file_path', ''))).name
-    if name == 'Grep': return 'searching for ' + one_line(args.get('pattern'), 40)
-    if name == 'Glob': return 'looking for ' + one_line(args.get('pattern'), 40)
-    if name == 'Bash': return one_line(args.get('command'), 60)
-    if name == 'WebFetch': return 'opening ' + one_line(args.get('url'), 50)
-    return {'record_verdict': 'recording the verdict', 'look_at_screen': 'looking at your screen', 'start_timer': 'starting the timer', 'add_tasks': 'writing the list', 'start_day': 'starting the day',
-            'install_blocking_helper': 'waiting for your password', 'list_apps': 'looking at open apps'}.get(name.rsplit('__', 1)[-1], '')
+    name = name.rsplit('__', 1)[-1]
+    if name == 'read_file': return 'reading ' + Path(str(args.get('path', ''))).name
+    if name == 'search_files': return 'searching for ' + one_line(args.get('query'), 40)
+    if name == 'list_files': return 'looking in ' + Path(str(args.get('path', ''))).name
+    if name == 'git_evidence': return 'git ' + one_line(args.get('what'), 10) + ' in ' + Path(str(args.get('repo', ''))).name
+    if name == 'open_link': return 'opening ' + one_line(args.get('url'), 50)
+    return {'view_screenshot': 'looking at the screenshot', 'request_folder': 'asking for a folder','record_verdict': 'recording the verdict', 'look_at_screen': 'looking at your screen', 'start_timer': 'starting the timer', 'add_tasks': 'writing the list', 'start_day': 'starting the day',
+            'install_blocking_helper': 'waiting for your password', 'list_apps': 'looking at open apps'}.get(name, '')
 
 class Session:
     """Owns the agent process. Turns are queued; output streams back as events."""
@@ -144,27 +162,33 @@ class Session:
         self.last = 0
         self.blocks = []
         self.partial = ''
+        # Tool calls must carry the token of the session that is running now; anything from an earlier one is refused.
+        self.token = ''
+        # Set when the backend changed: the next session starts without the earlier conversation.
+        self.forget = False
 
     def command(self, settings):
         override = os.environ.get('FOCUS_AGENT_CMD')
         if override: return [override]
-        server = {'command': '/usr/bin/python3', 'args': [str(common.PLUGIN/'focus.py'), 'mcp'], 'env': {'FOCUS_STATE_HOME': str(common.STATE)}}
+        server = {'command': '/usr/bin/python3', 'args': [str(common.PLUGIN/'focus.py'), 'mcp'],
+                  'env': {'FOCUS_STATE_HOME': str(common.STATE), 'FOCUS_SESSION': self.token}}
+        # No built-in tools at all: the model can only call Focus's own, which enforce the limits themselves.
         return [binary() or 'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
                 '--model', settings.get('model') or 'sonnet', '--no-session-persistence', '--strict-mcp-config',
                 '--mcp-config', json.dumps({'mcpServers': {'focus': server}}), '--setting-sources', '', '--system-prompt', PERSONA,
-                '--add-dir', str(common.STATE/'proof'),
-                '--tools', 'Read', 'Grep', 'Glob', 'Bash', 'WebFetch', '--allowedTools', 'Read', 'Grep', 'Glob', 'WebFetch', 'mcp__focus', 'Bash(ls:*)',
-                'Bash(git log:*)', 'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git show:*)',
-                'Bash(git -C * log*)', 'Bash(git -C * status*)', 'Bash(git -C * diff*)', 'Bash(git -C * show*)']
+                '--tools', '', '--allowedTools', 'mcp__focus']
 
     def running(self): return self.proc is not None and self.proc.poll() is None
 
     def ensure(self):
         if self.running(): return
         settings = self.host.model.s['settings']
-        env = {k: v for k, v in os.environ.items() if k not in ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT')}
+        self.token = secrets.token_hex(12)
+        # An empty scratch folder: nothing of the user's is reachable by path from where the agent starts.
+        scratch = common.STATE/'agent-scratch'
+        scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.proc = subprocess.Popen(self.command(settings), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                     cwd=evidence_root(settings.get('evidence')), env=env, bufsize=0)
+                                     cwd=str(scratch), env=environment(settings, self.token), bufsize=0)
         self.buffer, self.fresh, self.last = b'', True, time.time()
         self.host.watch(self.proc.stdout, self.readable)
 
@@ -180,8 +204,8 @@ class Session:
             self.ensure()
             text = self.host.digest() + '\n' + body
             if self.fresh:
-                text = self.host.recap() + text
-                self.fresh = False
+                if not self.forget: text = self.host.recap() + text
+                self.fresh = self.forget = False
             self.proc.stdin.write(json.dumps({'type': 'user', 'message': {'role': 'user', 'content': [{'type': 'text', 'text': text}]}}).encode() + b'\n')
         except OSError as exc:
             self.stop()
@@ -241,7 +265,7 @@ class Session:
             self.stop()
 
     def stop(self):
-        proc, self.proc, self.busy = self.proc, None, False
+        proc, self.proc, self.busy, self.token = self.proc, None, False, ''
         if proc is None: return
         self.host.unwatch(proc.stdout)
         for stream in (proc.stdin, proc.stdout):

@@ -1,4 +1,10 @@
-"""The tools the Focus agent uses to run the day. Every change goes through the model's rules."""
+"""The tools the Focus agent uses to run the day. Every change goes through the model's rules.
+
+These are the agent's only tools: it has no shell, no file access and no network of its own.
+Evidence comes through evidence.py, inside folders and links the user approved.
+"""
+import evidence
+import model as rules
 
 def tool(name, description, properties=None, required=()):
     return {'name': name, 'description': description,
@@ -30,7 +36,20 @@ TOOLS = [
          {'borders': {'type': 'boolean'}, 'strip': {'type': 'boolean'}, 'sound': {'type': 'boolean'}}),
     tool('start_timer', 'Start a timer on a task that is about spending time ("read for 30 minutes"). You get an event when it finishes; a finished timer is evidence.',
          {'id': ID, 'minutes': {'type': 'integer'}}, ['id', 'minutes']),
-    tool('look_at_screen', 'Take a screenshot of the user\'s screen as proof (the Focus card hides itself first). Returns the image path; Read it to see it. Only when they offer their screen as evidence.'),
+    tool('request_folder', 'Ask the user to let you read a folder (their projects, their notes). They see the path and must approve it themselves. Their answer arrives as an event.',
+         {'path': {'type': 'string', 'description': 'Full path, such as /home/name/Projects'}}, ['path']),
+    tool('list_files', 'List a folder inside an approved folder.', {'path': {'type': 'string'}}, ['path']),
+    tool('read_file', 'Read a text file inside an approved folder. Credentials and keys are never readable.',
+         {'path': {'type': 'string'}, 'start': {'type': 'integer'}, 'lines': {'type': 'integer'}}, ['path']),
+    tool('search_files', 'Search text files under an approved folder for a word or regular expression.',
+         {'query': {'type': 'string'}, 'path': {'type': 'string'}, 'glob': {'type': 'string', 'description': 'Optional file name pattern such as *.py'}}, ['query', 'path']),
+    tool('git_evidence', 'Look at a git repository inside an approved folder: status (uncommitted changes), log (recent commits), diff (working changes, or between two revisions as a..b), show (one commit).',
+         {'repo': {'type': 'string'}, 'what': {'type': 'string', 'enum': ['status', 'log', 'diff', 'show']},
+          'ref': {'type': 'string', 'description': 'A commit, branch or tag, or a..b for diff'}, 'path': {'type': 'string'}, 'limit': {'type': 'integer'}}, ['repo', 'what']),
+    tool('open_link', 'Read a web page the user gave you as evidence. The first call asks them to approve that exact link; call again after the event says they did.',
+         {'url': {'type': 'string'}}, ['url']),
+    tool('look_at_screen', 'Ask to see the user\'s screen as proof. They approve the capture, see the image, and approve sending it; then an event tells you to call view_screenshot.'),
+    tool('view_screenshot', 'See the screenshot the user approved. Available once, after the event says it is ready.'),
     tool('emergency_unlock', 'Begin an emergency unlock: the user is shown a 32 character code to type, then waits 60 seconds for 15 minutes of access. It is logged.'),
     tool('grade_day', 'Record a one-word grade and a one-line note for the day.', {'word': {'type': 'string'}, 'note': {'type': 'string'}}, ['word', 'note']),
     tool('suggest_reply', 'Offer the user\'s most likely reply as ghost text they can accept with Enter. Use it with any question that has an obvious answer.', {'text': {'type': 'string'}}, ['text']),
@@ -141,8 +160,27 @@ class Tools:
         self.apply('timer', id=a.get('id'), minutes=a.get('minutes'))
         return 'Timer running. It shows on the task; you get an event when it finishes.'
 
+    def roots(self): return evidence.approved(self.model.s['settings'])
+
+    def tool_request_folder(self, a):
+        return self.host.ask('folder', rules.folder(a.get('path')))
+
+    def tool_list_files(self, a): return evidence.list_files(a.get('path'), self.roots())
+    def tool_read_file(self, a): return evidence.read_file(a.get('path'), self.roots(), a.get('start'), a.get('lines'))
+    def tool_search_files(self, a): return evidence.search_files(a.get('query'), a.get('path'), self.roots(), a.get('glob') or '')
+    def tool_git_evidence(self, a): return evidence.git(a.get('repo'), a.get('what'), self.roots(), a.get('ref') or '', a.get('path') or '', a.get('limit'))
+
+    def tool_open_link(self, a):
+        url = evidence.check_url(a.get('url')).geturl()
+        if not self.host.link_allowed(url): return self.host.ask('link', url)
+        return evidence.fetch(url, self.host.link_allowed)
+
     def tool_look_at_screen(self, a):
-        return 'Screenshot saved at %s. Read it.' % self.host.look()
+        return self.host.ask('screen', '')
+
+    def tool_view_screenshot(self, a):
+        # The image itself is attached by the service; this only exists so the tool is real everywhere.
+        return self.host.shared_screenshot()
 
     def tool_emergency_unlock(self, a):
         self.apply('challenge')

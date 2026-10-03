@@ -16,13 +16,20 @@ import agent
 import blocking
 import common
 from common import one_line, read, write, toast
-from model import Model
+import base64
+from pathlib import Path
+
+from backend import Backend
+from model import Model, folder
 from tools import Tools
 
 # The very first thing Focus says is fixed: instant, and never an experiment in phrasing.
 FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time? Pick any below, or type your own."
 # Offered as clickable picks with the first question; anything else can be typed.
 COMMON_SITES = ['youtube.com', 'x.com', 'reddit.com', 'instagram.com', 'facebook.com', 'tiktok.com', 'twitch.tv', 'netflix.com', 'linkedin.com', 'news.ycombinator.com']
+HELP = ('/config shows the model and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider claude|ollama · '
+        '/model NAME · /endpoint URL · /forget deletes the conversation and any stored screenshot')
+YES, NO = ('y', 'yes', 'allow', 'ok', 'okay', 'sure', 'do it'), ('n', 'no', 'deny', 'cancel', 'not now', 'stop')
 NO_AGENT = "I need Claude Code to work, and I can't find it. Install it with `omarchy default agent claude`, sign in, then open me again."
 EVENTS = {
     'morning': 'A new day. The card just opened for the morning check-in. Greet them in one line and get to what today holds.',
@@ -38,6 +45,8 @@ class Chat:
         self.greeted = saved.get('greeted', '')
         self.messages = saved.get('messages', [])
         self.choices = saved.get('choices')
+        # Something only the user can approve: a folder, a link, a screenshot. Never granted by the agent.
+        self.consent = None
         self.streaming = self.activity = self.suggestion = ''
         self.busy = False
 
@@ -49,7 +58,7 @@ class Chat:
 
     def public(self):
         return {'messages': self.messages[-12:], 'streaming': self.streaming, 'activity': self.activity,
-                'suggestion': self.suggestion, 'choices': self.choices, 'busy': self.busy}
+                'suggestion': self.suggestion, 'choices': self.choices, 'consent': self.consent, 'busy': self.busy}
 
 class Daemon:
     def __init__(self):
@@ -59,6 +68,11 @@ class Daemon:
         self.borders = blocking.Borders()
         self.capture = False
         self.passed = None
+        self.backend = Backend()
+        self.links = set()
+        self.shot = None
+        settings = self.model.s['settings']
+        self.config = (settings['provider'], settings['model'], settings['endpoint'], tuple(settings['roots']))
         self.chat = Chat()
         self.session = agent.Session(self)
         self.tools = Tools(self.model, self)
@@ -97,7 +111,101 @@ class Daemon:
         self.chat.busy, self.chat.streaming, self.chat.activity = False, '', ''
         self.chat.add('system', text)
 
-    def look(self): return blocking.screenshot()
+    # --- consent: the user approves folders, links and screenshots; the agent can only ask ----------
+
+    def info(self): return self.backend.describe(self.model.s['settings'])
+    def link_allowed(self, url): return url in self.links
+    def shared_screenshot(self): raise ValueError('There is no approved screenshot to view.')
+
+    def ask(self, kind, value):
+        if self.chat.consent: raise ValueError('Already waiting for the user to answer another request.')
+        info = self.info()
+        if kind == 'screen' and not info['vision']: raise ValueError('This model cannot see images, so a screenshot would not help. Use another kind of evidence.')
+        text = {'folder': 'Let Focus read files in %s? Keys and credentials inside it are never read.' % value,
+                'link': 'Let Focus open this link? %s' % value,
+                'screen': 'Take a screenshot of this monitor? You will see it before anything is sent.'}[kind]
+        self.chat.consent = {'kind': kind, 'value': value, 'text': text, 'preview': '', 'goes': info['label']}
+        return 'Asked the user. Say in a few words what you asked for and stop; their answer arrives as an event.'
+
+    def discard_consent(self):
+        if self.chat.consent and self.chat.consent['kind'] == 'share': self.discard_shot()
+        self.chat.consent = None
+
+    def discard_shot(self):
+        for old in (common.STATE/'proof').glob('screen-*'): old.unlink()
+        self.shot = None
+
+    def decide(self, yes):
+        consent, self.chat.consent = self.chat.consent, None
+        if not consent: return
+        kind, value = consent['kind'], consent['value']
+        if kind == 'folder':
+            if yes: self.model.apply({'op': 'settings', 'values': {'roots': self.model.s['settings']['roots'] + [value]}}, time.time())
+            self.resume('The user %s the folder %s.' % ('approved' if yes else 'declined', value))
+        elif kind == 'link':
+            if yes: self.links.add(value)
+            self.resume('The user approved the link; call open_link again.' if yes else 'The user declined the link.')
+        elif kind == 'screen':
+            if not yes: return self.resume('The user declined the screenshot.')
+            self.capture = True  # the card steps aside while the picture is taken
+            def work():
+                time.sleep(0.7)
+                try: self.done.put(('captured', blocking.screenshot(), ''))
+                except Exception as exc: self.done.put(('captured', '', one_line(exc, 200) or 'failed'))
+            threading.Thread(target=work, daemon=True).start()
+        elif kind == 'share':
+            if yes: self.shot = value
+            else: self.discard_shot()
+            self.resume('The user has shared an image as evidence; call view_screenshot now to see it.' if yes else 'The user looked at the image and chose not to share it.')
+
+    def resume(self, text):
+        """Tell the agent what the user decided. After a settings change the old session is gone; the new one hears it."""
+        self.reconfigure()
+        self.event(text)
+
+    def reconfigure(self):
+        """A change of model, server or approved folders ends the running session; nothing from it can land afterwards."""
+        settings = self.model.s['settings']
+        config = (settings['provider'], settings['model'], settings['endpoint'], tuple(settings['roots']))
+        if config == self.config: return
+        changed_backend = self.config is not None and config[:3] != self.config[:3]
+        was_busy, self.config = self.session.busy, config
+        self.session.stop()
+        self.session.queue.clear()
+        if changed_backend:
+            # A different model is a different recipient: it does not inherit pending approvals or the earlier conversation.
+            self.chat.consent = None
+            self.links.clear()
+            self.discard_shot()
+            self.session.forget = True
+        if was_busy: self.turn_failed('Settings changed mid-reply, so that reply was dropped. Say it again.')
+
+    def command(self, text):
+        """Typed by the user, handled here: configuration never depends on the model being reachable or willing."""
+        words = text[1:].split()
+        name, rest = (words[0].lower() if words else 'help'), ' '.join(words[1:])
+        now, settings = time.time(), self.model.s['settings']
+        change = lambda **values: self.model.apply({'op': 'settings', 'values': values}, now)
+        if name == 'folder':
+            if rest.startswith('remove '):
+                target = str(Path(rest[7:].strip()).expanduser())
+                change(roots=[r for r in settings['roots'] if r != target])
+            elif rest: change(roots=settings['roots'] + [folder(rest)])
+        elif name == 'provider' and rest: change(provider=rest.lower())
+        elif name == 'model': change(model=rest)
+        elif name == 'endpoint' and rest: change(endpoint=rest)
+        elif name == 'forget':
+            self.chat.messages, self.chat.choices, self.chat.consent, self.chat.suggestion = [], None, None, ''
+            self.links.clear(); self.discard_shot()
+            self.session.stop()
+            self.chat.save()
+            return 'Forgotten: the conversation, approved links and any stored screenshot. Tasks and history are kept.'
+        elif name not in ('config', 'help'): return 'Unknown command. ' + HELP
+        if name == 'help': return HELP
+        self.reconfigure()
+        settings, info = self.model.s['settings'], self.backend.describe(self.model.s['settings'])
+        return 'Model: %s%s · Folders I may read: %s' % (info['label'], '' if info['ok'] else ' (' + info['error'] + ')', ', '.join(settings['roots']) or 'none')
+
     def open_apps(self): return blocking.open_apps()
     def installed_apps(self): return blocking.installed_apps()
     def connect_browser(self): return blocking.browser_connect()
@@ -118,6 +226,7 @@ class Daemon:
 
     def state(self):
         return {**self.runtime.enrich(self.model.snapshot(time.time())), 'agent': agent.available(), 'auth': self.auth, 'capture': self.capture,
+                'backend': self.info(),
                 'introduced': self.chat.greeted.startswith('first_run')}
 
     def event(self, text): self.session.send('<event>' + text + '</event>')
@@ -131,10 +240,19 @@ class Daemon:
             self.model.apply({'op': 'challenge-submit', 'code': text}, now)
             self.chat.add('system', 'Code accepted. Unlocking in 60 seconds.')
             return
+        if text.startswith('/'):
+            try: self.chat.add('system', self.command(text))
+            except ValueError as exc: self.chat.add('system', str(exc))
+            return
+        if self.chat.consent and text.lower().rstrip('.!') in YES + NO:
+            return self.decide(text.lower().rstrip('.!') in YES)
         self.chat.suggestion, self.chat.choices = '', None
         self.chat.add('user', text)
-        if agent.available(): self.session.send('<user>' + text + '</user>')
-        else: self.without_agent(text, now)
+        if not agent.available(): return self.without_agent(text, now)
+        info = self.info()
+        # No fallback: if the chosen model cannot be reached, say so and change nothing.
+        if not info['ok']: return self.chat.add('system', info['error'] + ' Type /config to see the setup, or /provider claude to switch.')
+        self.session.send('<user>' + text + '</user>')
 
     def without_agent(self, text, now):
         """No agent installed: lines become tasks and "start" starts, so the day still works."""
@@ -157,7 +275,7 @@ class Daemon:
         if not agent.available():
             if not self.model.s['setup'] and (not self.chat.messages or self.chat.messages[-1]['text'] != NO_AGENT): self.chat.add('system', NO_AGENT)
             return
-        if self.session.busy or self.session.queue: return
+        if self.session.busy or self.session.queue or not self.info()['ok']: return
         state, greeting = self.model.snapshot(time.time()), ''
         if not state['setup']: greeting = 'first_run'
         elif not state['started'] and not state['recovered']: greeting = 'morning'
@@ -165,6 +283,9 @@ class Daemon:
             self.chat.greeted = greeting + state['date']
             if greeting == 'first_run':
                 self.chat.choices = {'options': COMMON_SITES, 'multiple': True}
+                # Said before anything is typed: where the words go.
+                self.chat.add('system', 'Before you start: I run on %s. What you type here, and any file, link or screenshot you let me look at, is %s. Your tasks and history stay on this machine. /config shows or changes this.'
+                              % (self.info()['label'], 'read there' if self.info()['where'] != 'local' else 'read on this machine'))
                 self.chat.add('agent', FIRST_RUN)
             else:
                 self.chat.save()
@@ -192,18 +313,26 @@ class Daemon:
         elif op == 'opened': self.opened()
         elif op == 'closed': self.visible = False
         elif op == 'blocked': self.blocked(one_line(cmd.get('name'), 80))
-        elif op == 'tool' and cmd.get('name') == 'look_at_screen':
-            # The card has to get out of the way first, so the answer comes later, from a thread.
-            if self.capture: raise ValueError('Already looking.')
-            self.capture = True
-            def work():
-                time.sleep(0.7)
-                try: self.done.put(('capture', client, {'ok': True, 'text': self.tools.call('look_at_screen', {}, time.time())}))
-                except Exception as exc: self.done.put(('capture', client, {'ok': False, 'error': one_line(exc, 200) or 'Could not capture the screen.'}))
-            threading.Thread(target=work, daemon=True).start()
-            return None
-        elif op == 'tool': reply['text'] = self.tools.call(cmd.get('name'), cmd.get('args'), now)
+        elif op == 'consent': self.decide(bool(cmd.get('answer')))
+        elif op == 'paste':
+            # The user pasted a picture as evidence. It is theirs to offer, and they still see it and confirm before it is sent.
+            if not self.info()['vision']: raise ValueError('This model cannot see images.')
+            path = blocking.clipboard_image()
+            if path:
+                self.discard_consent()
+                self.chat.consent = {'kind': 'share', 'value': path, 'text': 'Send this pasted image to be read?', 'preview': path, 'goes': self.info()['label']}
+        elif op == 'forget': self.command('/forget')
+        elif op == 'tool':
+            # A tool call from a session that has since been replaced must not land.
+            if cmd.get('session') is not None and cmd.get('session') != self.session.token: raise ValueError('That session has ended.')
+            if cmd.get('name') == 'view_screenshot':
+                if not self.shot: raise ValueError('There is no approved screenshot to view.')
+                reply['text'] = 'The screenshot the user approved.'
+                reply['image'] = {'data': base64.b64encode(Path(self.shot).read_bytes()).decode(), 'mime': 'image/png' if self.shot.endswith('.png') else 'image/jpeg'}
+                self.discard_shot()  # seen once, then gone
+            else: reply['text'] = self.tools.call(cmd.get('name'), cmd.get('args'), now)
         else: self.model.apply(cmd, now)
+        if op == 'settings': self.reconfigure()
         self.settle(force=op not in ('snapshot', 'subscribe', 'say', 'opened', 'closed'))
         reply['state'] = self.state()
         if op in ('subscribe', 'say'): reply['chat'] = self.chat.public()
@@ -219,7 +348,8 @@ class Daemon:
             self.event('The timer on [%s] "%s" has finished: %d minutes on the clock. Record the verdict.' % (t['id'], t['text'], t['timer']['minutes']))
         state = self.model.snapshot(now)
         if self.chat.day != state['date']:
-            self.chat.day, self.chat.messages = state['date'], []
+            self.chat.day, self.chat.messages, self.chat.consent = state['date'], [], None
+            self.links.clear(); self.discard_shot()
             self.chat.save()
         serialized = json.dumps(self.model.s)
         if serialized != self.saved:
@@ -291,9 +421,10 @@ class Daemon:
         while True:
             try: finished = self.done.get_nowait()
             except queue.Empty: break
-            if finished[0] == 'capture':
+            if finished[0] == 'captured':
                 self.capture = False
-                if finished[1]['conn'] in self.clients: self.send(finished[1], finished[2])
+                if finished[2]: self.resume('The screenshot could not be taken: ' + finished[2])
+                else: self.chat.consent = {'kind': 'share', 'value': finished[1], 'text': 'Send this screenshot to be read?', 'preview': finished[1], 'goes': self.info()['label']}
                 continue
             self.auth = False
             self.event('The system helper install ' + ('failed: ' + finished[1] if finished[1] else 'finished: it is installed.') + ' Carry on with setup.')

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "local.focus",
   "name": "Omarchy Focus",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "author": "Bennet",
   "description": "Tell it your day. An agent keeps your distractions blocked until the work checks out.",
   "license": "MIT",
