@@ -34,6 +34,8 @@ TOOLS = [
     tool('emergency_unlock', 'Begin an emergency unlock: the user is shown a 32 character code to type, then waits 60 seconds for 15 minutes of access. It is logged.'),
     tool('grade_day', 'Record a one-word grade and a one-line note for the day.', {'word': {'type': 'string'}, 'note': {'type': 'string'}}, ['word', 'note']),
     tool('suggest_reply', 'Offer the user\'s most likely reply as ghost text they can accept with Enter. Use it with any question that has an obvious answer.', {'text': {'type': 'string'}}, ['text']),
+    tool('offer_choices', 'Show clickable answers under your question. Use it when there are two to six clear answers (which mode, keep or drop). multiple lets them pick several before sending.',
+         {'options': STRINGS, 'multiple': {'type': 'boolean'}}, ['options']),
     tool('install_blocking_helper', 'Setup: install the system helper that makes website blocks hold in every browser. Shows the user one password prompt. The result arrives later as an event.'),
     tool('connect_browser', 'Setup: load the companion browser extension and register its local bridge. Takes effect when the browser restarts.'),
     tool('finish_setup', 'Setup: mark first-run setup complete. Blocking begins from here.'),
@@ -152,6 +154,12 @@ class Tools:
 
     def tool_suggest_reply(self, a):
         self.host.suggest(a.get('text'))
+        return 'Shown.'
+
+    def tool_offer_choices(self, a):
+        options = a.get('options')
+        if not isinstance(options, list) or not 2 <= len(options) <= 12: raise ValueError('Offer 2 to 12 options.')
+        self.host.choose(options, a.get('multiple'))
         return 'Shown.'
 
     def tool_install_blocking_helper(self, a):

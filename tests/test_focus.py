@@ -199,6 +199,7 @@ class Host:
     def installed_apps(self): return [('Steam','steam'),('YouTube','site youtube.com')]
     def connect_browser(self): return ['chromium']
     def suggest(self,text): self.suggested=text
+    def choose(self,options,multiple): self.choices=(options,multiple)
     def install_helper(self): self.installs+=1; return 'Prompt showing.'
 
 class ToolTests(unittest.TestCase):
@@ -217,6 +218,8 @@ class ToolTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.call('start_day')
         self.assertEqual(self.call('update_task',id=ids[1],main=True,check='She picked up'),'Task check updated, is now the main task.')
         self.call('start_day'); self.call('suggest_reply',text='yes'); self.assertEqual(self.host.suggested,'yes')
+        self.call('offer_choices',options=['hard','lockdown']); self.assertEqual(self.host.choices,(['hard','lockdown'],None))
+        with self.assertRaises(ValueError): self.call('offer_choices',options=['only one'])
         with self.assertRaises(ValueError): self.call('unblock',sites=['youtube.com'])
         self.assertIn('x.com',self.call('block',sites=['reddit.com']))
         self.assertIn('30 seconds',self.call('remove_task',id=ids[0])); self.call('cancel_change',id=ids[0])
@@ -376,6 +379,8 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(common.rpc({'op':'snapshot'})['introduced'])
         chat=json.loads((self.path/'chat.json').read_text())
         self.assertEqual([m['role'] for m in chat['messages']],['agent']); self.assertIn('Which ones waste your time?',chat['messages'][0]['text'])
+        self.assertIn('youtube.com',chat['choices']['options']); self.assertTrue(chat['choices']['multiple'])
+        focus.say('youtube.com, reddit.com'); self.assertIsNone(common.request({'op':'subscribe'})['chat']['choices'])
     def test_first_run_without_an_agent_says_so_and_keeps_setup_pending(self):
         self.tearDown()
         self.tmp=tempfile.TemporaryDirectory(); self.path=Path(self.tmp.name)

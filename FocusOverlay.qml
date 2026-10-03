@@ -85,6 +85,16 @@ Item {
       out += i < shown || target.charAt(i) === " " ? target.charAt(i) : noise.charAt(Math.floor(Math.random() * noise.length))
     return out
   }
+  // Clickable answers the agent (or the first-run question) is offering.
+  readonly property string choicesKey: JSON.stringify(chat.choices || null)
+  readonly property var choices: { var c = JSON.parse(choicesKey); return c ? c.options || [] : [] }
+  readonly property bool manyChoices: { var c = JSON.parse(choicesKey); return !!c && !!c.multiple }
+  property var picked: []
+  onChoicesKeyChanged: picked = []
+  function pick(option) {
+    if (!manyChoices) { service.say(option); return }
+    picked = picked.indexOf(option) >= 0 ? picked.filter(function(o) { return o !== option }) : picked.concat([option])
+  }
   function seconds(until) { return Math.max(0, Math.ceil(until - clock)) }
   function pendingText(change) {
     var verb = change.action === "delete" ? "drops" : change.action === "main" ? "becomes main" : "rewords"
@@ -336,6 +346,25 @@ Item {
             }
           }
 
+          Flow {
+            visible: root.choices.length > 0 && !root.chat.busy
+            Layout.fillWidth: true
+            spacing: Style.space(8)
+            Repeater {
+              model: root.choices
+              delegate: Rectangle {
+                required property string modelData
+                readonly property bool on: root.picked.indexOf(modelData) >= 0
+                width: chip.implicitWidth + Style.space(22); height: chip.implicitHeight + Style.space(12)
+                radius: Style.cornerRadius
+                color: on ? Util.alpha(root.tone, 0.2) : hover.containsMouse ? Util.alpha(Color.menu.text, 0.08) : "transparent"
+                border.width: 1; border.color: on ? root.tone : Util.alpha(Color.menu.text, 0.28)
+                Line { id: chip; anchors.centerIn: parent; text: (parent.on ? "✓ " : "") + modelData; color: parent.on ? root.tone : Color.menu.text; font.pixelSize: Style.font.subtitle }
+                MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pick(modelData) }
+              }
+            }
+          }
+
           RowLayout {
             Layout.fillWidth: true
             spacing: Style.space(12)
@@ -352,9 +381,9 @@ Item {
               maximumLength: 4000
               focus: true
               cursorDelegate: Rectangle { width: Style.space(8); color: root.tone; opacity: prompt.activeFocus ? 0.9 : 0 }
-              property string ghost: root.chat.suggestion || (!root.snapshot.agent ? "type a task" : !root.snapshot.setup ? "" : !root.snapshot.started ? "say what today holds" : root.snapshot.locked ? "say what's done" : "")
+              property string ghost: root.picked.length ? "add your own, or press enter" : root.chat.suggestion || (!root.snapshot.agent ? "type a task" : !root.snapshot.setup ? "" : !root.snapshot.started ? "say what today holds" : root.snapshot.locked ? "say what's done" : "")
               function submit() {
-                var words = text.trim() || root.chat.suggestion || ""
+                var words = root.picked.concat(text.trim() ? [text.trim()] : []).join(", ") || root.chat.suggestion || ""
                 if (!words) return
                 root.service.say(words)
                 text = ""
@@ -389,7 +418,7 @@ Item {
               font.pixelSize: Style.font.bodySmall; opacity: 0.8
             }
             Line {
-              text: (root.chat.suggestion && !prompt.text ? "enter accepts · " : "enter sends · ") + "esc closes"
+              text: (root.choices.length ? "click to pick · " : "") + (root.chat.suggestion && !prompt.text && !root.picked.length ? "enter accepts · " : "enter sends · ") + "esc closes"
               color: Color.muted; font.pixelSize: Style.font.bodySmall; opacity: 0.8
             }
           }

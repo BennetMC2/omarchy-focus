@@ -20,7 +20,9 @@ from model import Model
 from tools import Tools
 
 # The very first thing Focus says is fixed: instant, and never an experiment in phrasing.
-FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time?"
+FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time? Pick any below, or type your own."
+# Offered as clickable picks with the first question; anything else can be typed.
+COMMON_SITES = ['youtube.com', 'x.com', 'reddit.com', 'instagram.com', 'facebook.com', 'tiktok.com', 'twitch.tv', 'netflix.com', 'linkedin.com', 'news.ycombinator.com']
 NO_AGENT = "I need Claude Code to work, and I can't find it. Install it with `omarchy default agent claude`, sign in, then open me again."
 EVENTS = {
     'morning': 'A new day. The card just opened for the morning check-in. Greet them in one line and get to what today holds.',
@@ -35,6 +37,7 @@ class Chat:
         self.day = saved.get('day', '')
         self.greeted = saved.get('greeted', '')
         self.messages = saved.get('messages', [])
+        self.choices = saved.get('choices')
         self.streaming = self.activity = self.suggestion = ''
         self.busy = False
 
@@ -42,11 +45,11 @@ class Chat:
         self.messages = (self.messages + [{'role': role, 'text': text, 'at': time.time()}])[-self.KEEP:]
         self.save()
 
-    def save(self): write(common.STATE/'chat.json', {'day': self.day, 'greeted': self.greeted, 'messages': self.messages})
+    def save(self): write(common.STATE/'chat.json', {'day': self.day, 'greeted': self.greeted, 'messages': self.messages, 'choices': self.choices})
 
     def public(self):
         return {'messages': self.messages[-12:], 'streaming': self.streaming, 'activity': self.activity,
-                'suggestion': self.suggestion, 'busy': self.busy}
+                'suggestion': self.suggestion, 'choices': self.choices, 'busy': self.busy}
 
 class Daemon:
     def __init__(self):
@@ -99,6 +102,9 @@ class Daemon:
     def installed_apps(self): return blocking.installed_apps()
     def connect_browser(self): return blocking.browser_connect()
     def suggest(self, text): self.chat.suggestion = one_line(text, 80)
+    def choose(self, options, multiple):
+        self.chat.choices = {'options': [one_line(o, 40) for o in options][:12], 'multiple': bool(multiple)}
+        self.chat.save()
     def install_helper(self):
         if self.auth: raise ValueError('A password prompt is already showing.')
         self.auth = True
@@ -125,7 +131,7 @@ class Daemon:
             self.model.apply({'op': 'challenge-submit', 'code': text}, now)
             self.chat.add('system', 'Code accepted. Unlocking in 60 seconds.')
             return
-        self.chat.suggestion = ''
+        self.chat.suggestion, self.chat.choices = '', None
         self.chat.add('user', text)
         if agent.available(): self.session.send('<user>' + text + '</user>')
         else: self.without_agent(text, now)
@@ -158,7 +164,7 @@ class Daemon:
         if greeting and self.chat.greeted != greeting + state['date']:
             self.chat.greeted = greeting + state['date']
             if greeting == 'first_run':
-                self.chat.suggestion = 'youtube, x, reddit'
+                self.chat.choices = {'options': COMMON_SITES, 'multiple': True}
                 self.chat.add('agent', FIRST_RUN)
             else:
                 self.chat.save()
