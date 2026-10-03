@@ -63,7 +63,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: card.prompt
-    contentWidth: panel.fittedContentWidth(Style.space(540))
+    contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(card.implicitHeight, Style.space(760))
     FocusCard {
       id: card

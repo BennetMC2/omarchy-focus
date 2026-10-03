@@ -88,12 +88,12 @@ Item {
   ColumnLayout {
     id: body
     anchors { left: parent.left; right: parent.right; top: parent.top }
-    spacing: Style.space(14)
+    spacing: Style.space(10)
 
     RowLayout {
       Layout.fillWidth: true
-      Line { text: "FOCUS"; color: root.strictness === "lockdown" ? root.tone : Color.menu.text; font.pixelSize: Style.font.title; font.weight: Font.Bold; font.letterSpacing: Style.space(4); Layout.fillWidth: true }
-      Line { text: "[ " + (root.snapshot.setup ? root.rank.toUpperCase() + " · " : "") + root.status.toUpperCase() + " ]"; color: root.snapshot.locked && root.snapshot.setup ? root.tone : Color.muted; font.pixelSize: Style.font.bodySmall; font.letterSpacing: Style.space(1) }
+      Line { text: "FOCUS"; color: root.strictness === "lockdown" ? root.tone : Color.menu.text; font.pixelSize: Style.font.subtitle; font.weight: Font.Bold; font.letterSpacing: Style.space(4); Layout.fillWidth: true }
+      Line { text: "[ " + (root.snapshot.setup ? root.rank.toUpperCase() + " · " : "") + root.status.toUpperCase() + " ]"; color: root.snapshot.locked && root.snapshot.setup ? root.tone : Color.muted; font.pixelSize: Style.font.caption; font.letterSpacing: Style.space(1) }
     }
     Rectangle {
       Layout.fillWidth: true; Layout.topMargin: -Style.space(6); height: Math.max(1, Style.space(2))
@@ -164,9 +164,9 @@ Item {
             required property var modelData
             Layout.fillWidth: true
             spacing: Style.space(12)
-            Line { text: "↻"; color: Color.muted; font.pixelSize: Style.font.title; Layout.preferredWidth: Style.space(18); Layout.alignment: Qt.AlignTop }
-            Line { text: modelData.text; color: Color.muted; font.pixelSize: Style.font.title; Layout.fillWidth: true; wrapMode: Text.Wrap }
-            Line { text: "from yesterday"; color: Color.muted; font.pixelSize: Style.font.bodySmall; Layout.alignment: Qt.AlignTop }
+            Line { text: "↻"; color: Color.muted; font.pixelSize: Style.font.body; Layout.preferredWidth: Style.space(14); Layout.alignment: Qt.AlignTop }
+            Line { text: modelData.text; color: Color.muted; font.pixelSize: Style.font.body; Layout.fillWidth: true; wrapMode: Text.Wrap }
+            Line { text: "from yesterday"; color: Color.muted; font.pixelSize: Style.font.caption; Layout.alignment: Qt.AlignTop }
           }
         }
         Repeater {
@@ -184,29 +184,29 @@ Item {
             Line {
               text: row.passed ? "✓" : modelData.main ? "★" : modelData.verdict === "fail" ? "×" : "·"
               color: row.passed || modelData.main ? root.tone : modelData.verdict === "fail" ? Color.urgent : Color.muted
-              font.pixelSize: Style.font.title
-              Layout.preferredWidth: Style.space(18); Layout.alignment: Qt.AlignTop
+              font.pixelSize: Style.font.body
+              Layout.preferredWidth: Style.space(14); Layout.alignment: Qt.AlignTop
             }
             ColumnLayout {
               Layout.fillWidth: true
               spacing: Style.space(3)
               Line {
-                text: modelData.text; font.pixelSize: Style.font.title; Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: modelData.text; font.pixelSize: Style.font.body; Layout.fillWidth: true; wrapMode: Text.Wrap
                 color: row.fresh ? (row.passed ? root.tone : Color.urgent) : row.passed ? Color.muted : Color.menu.text
                 Behavior on color { ColorAnimation { duration: 900 } }
               }
-              Line { visible: !!modelData.note; text: modelData.note || ""; color: Color.muted; font.pixelSize: Style.font.body; Layout.fillWidth: true; wrapMode: Text.Wrap }
-              Line { visible: !!row.change; text: row.change ? root.pendingText(row.change) : ""; color: root.tone; font.pixelSize: Style.font.body }
+              Line { visible: !!modelData.note; text: modelData.note || ""; color: Color.muted; font.pixelSize: Style.font.bodySmall; Layout.fillWidth: true; wrapMode: Text.Wrap }
+              Line { visible: !!row.change; text: row.change ? root.pendingText(row.change) : ""; color: root.tone; font.pixelSize: Style.font.bodySmall }
               Line {
                 visible: !!modelData.timer && !row.passed
                 text: !modelData.timer ? "" : modelData.timer.done ? "timer finished · " + modelData.timer.minutes + " minutes" : "timer " + root.clockText(modelData.timer.until)
-                color: root.tone; font.pixelSize: Style.font.body
+                color: root.tone; font.pixelSize: Style.font.bodySmall
               }
             }
             Line {
               visible: text !== ""
               text: row.passed && modelData.by === "external" ? "external" : (row.passed && modelData.basis === "claim") || (!row.passed && modelData.onWord) ? "on your word" : modelData.main && row.passed ? "main" : ""
-              color: Color.muted; font.pixelSize: Style.font.bodySmall; Layout.alignment: Qt.AlignTop
+              color: Color.muted; font.pixelSize: Style.font.caption; Layout.alignment: Qt.AlignTop
             }
           }
         }
@@ -221,11 +221,11 @@ Item {
       spacing: Style.space(6)
       Line {
         text: root.snapshot.challenge ? root.snapshot.challenge.code : ""
-        color: root.tone; font.pixelSize: Style.font.display; font.letterSpacing: Style.space(2)
+        color: root.tone; font.pixelSize: Style.font.heading; font.letterSpacing: Style.space(2)
         Layout.fillWidth: true; wrapMode: Text.WrapAnywhere
       }
       Line {
-        color: Color.muted; font.pixelSize: Style.font.body
+        color: Color.muted; font.pixelSize: Style.font.bodySmall
         text: !root.snapshot.challenge ? "" : root.snapshot.challenge.readyAt === null ? "Type this exactly for 15 minutes of access. It is logged."
           : "Unlocking in " + root.seconds(root.snapshot.challenge.readyAt) + "s"
       }
@@ -244,16 +244,16 @@ Item {
           Layout.fillWidth: true
           wrapMode: Text.Wrap
           text: (modelData.role === "user" ? "› " : "") + modelData.text + (modelData.live ? " ▍" : "")
-          font.pixelSize: modelData.role === "user" ? Style.font.subtitle : Style.font.title
+          font.pixelSize: modelData.role === "user" ? Style.font.subtitle : Style.font.body
           color: modelData.role === "user" ? Color.muted : Color.menu.text
           opacity: newest || modelData.role === "user" ? 1 : 0.45
-          lineHeight: 1.25
+          lineHeight: 1.2
         }
       }
       Line {
         visible: !!root.chat.busy && !root.chat.streaming
         text: root.spinnerFrames[root.spinnerFrame] + "  " + (root.chat.activity || "thinking")
-        color: Color.muted; font.pixelSize: Style.font.body
+        color: Color.muted; font.pixelSize: Style.font.bodySmall
         Layout.fillWidth: true; elide: Text.ElideRight
       }
     }
@@ -271,7 +271,7 @@ Item {
           radius: Style.cornerRadius
           color: on ? Util.alpha(root.tone, 0.2) : hover.containsMouse ? Util.alpha(Color.menu.text, 0.08) : "transparent"
           border.width: 1; border.color: on ? root.tone : Util.alpha(Color.menu.text, 0.28)
-          Line { id: chip; anchors.centerIn: parent; text: (parent.on ? "✓ " : "") + modelData; color: parent.on ? root.tone : Color.menu.text; font.pixelSize: Style.font.body }
+          Line { id: chip; anchors.centerIn: parent; text: (parent.on ? "✓ " : "") + modelData; color: parent.on ? root.tone : Color.menu.text; font.pixelSize: Style.font.bodySmall }
           MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pick(modelData) }
         }
       }
@@ -280,13 +280,13 @@ Item {
     RowLayout {
       Layout.fillWidth: true
       spacing: Style.space(12)
-      Line { text: "›"; color: root.tone; font.pixelSize: Style.font.title; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignTop }
+      Line { text: "›"; color: root.tone; font.pixelSize: Style.font.body; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignTop }
       TextInput {
         id: prompt
         Layout.fillWidth: true
         color: Color.menu.text
         font.family: Style.font.family
-        font.pixelSize: Style.font.title
+        font.pixelSize: Style.font.body
         wrapMode: TextInput.Wrap
         selectionColor: Style.selectionFill
         selectedTextColor: Color.menu.text
@@ -320,7 +320,7 @@ Item {
           visible: !prompt.text
           x: Style.space(14)
           text: prompt.ghost
-          color: root.readyToStart ? root.tone : Color.muted; font.pixelSize: Style.font.title
+          color: root.readyToStart ? root.tone : Color.muted; font.pixelSize: Style.font.body
           opacity: root.readyToStart || root.chat.suggestion ? 0.9 : 0.55
         }
       }
@@ -333,11 +333,11 @@ Item {
         Layout.fillWidth: true; elide: Text.ElideRight
         text: root.service && root.service.error ? root.service.error : root.snapshot.blockingError ? root.snapshot.blockingError : root.blockedSummary
         color: (root.service && root.service.error) || root.snapshot.blockingError ? Color.urgent : Color.muted
-        font.pixelSize: Style.font.bodySmall; opacity: 0.8
+        font.pixelSize: Style.font.caption; opacity: 0.8
       }
       Line {
         text: (root.choices.length ? "click to pick · " : "") + (root.readyToStart && !prompt.text ? "enter locks in · " : root.chat.suggestion && !prompt.text && !root.picked.length ? "enter accepts · " : "enter sends · ") + "esc closes"
-        color: Color.muted; font.pixelSize: Style.font.bodySmall; opacity: 0.8
+        color: Color.muted; font.pixelSize: Style.font.caption; opacity: 0.8
       }
     }
   }
