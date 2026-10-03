@@ -1,31 +1,19 @@
 import QtQuick
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
-import qs.Ui as Ui
 
-// The whole of Focus: today's list, what the agent last said, and one prompt. No buttons.
+// Full-screen moments: a block reached, the day locked in, the unlock, a new day. The card itself lives under the bar icon.
 Item {
   id: root
   property var service: null
   readonly property var snapshot: service ? service.state : ({tasks: [], carry: [], settings: {}, pending: {}, overrides: [], setup: true})
   readonly property var chat: service ? service.chat : ({messages: [], streaming: "", activity: "", suggestion: "", busy: false})
   readonly property real clock: service ? service.clock : 0
-  readonly property bool open: !!service && service.view !== "" && !service.screenLocked
-  readonly property var spinnerFrames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-  property int spinnerFrame: 0
-  // The reply being written counts as the newest message.
-  readonly property var lines: {
-    var shown = (chat.messages || []).slice(-3)
-    if (chat.streaming) shown = shown.slice(-2).concat([{role: "agent", text: chat.streaming, live: true}])
-    return shown
-  }
+  readonly property bool open: !!service && service.view === "takeover" && !service.screenLocked
   readonly property string strictness: (service && service.skinPreview) || snapshot.settings.strictness || "standard"
   // Lockdown runs in the theme's red; hard and lockdown get scanlines.
-  readonly property var levels: ["honor", "standard", "hard", "lockdown"]
   readonly property color tone: strictness === "lockdown" ? Color.urgent : Color.accent
-  readonly property bool harsh: strictness === "hard" || strictness === "lockdown"
   readonly property string rank: {
     var days = snapshot.streak || 0
     return days >= 30 ? "ghost" : days >= 14 ? "veteran" : days >= 7 ? "specialist" : days >= 3 ? "operator" : days >= 1 ? "initiate" : "drifter"
@@ -33,11 +21,8 @@ Item {
   readonly property string kind: service ? service.alarmKind : ""
   readonly property string bannerTitle: kind === "granted" ? "ACCESS GRANTED" : kind === "morning" ? "NEW DAY" : kind === "start" ? "LOCKED IN" : "ACCESS DENIED"
   readonly property var mainTask: (snapshot.tasks || []).filter(function(t) { return t.main })[0] || null
-  // The list is settled and the day has not begun: one Enter starts it.
-  readonly property bool readyToStart: !!snapshot.setup && !snapshot.started && (snapshot.tasks || []).length > 0 && !!mainTask
-    && (snapshot.tasks || []).filter(function(t) { return t.main }).length === 1 && !(snapshot.carry || []).length && !chat.busy
-  // Locking in is a moment, not a message: once it has played, the card gets out of the way.
-  onIntroChanged: if (!intro && alarm && kind === "start" && service) Qt.callLater(service.close)
+  // When the moment has played, hand over to the dropdown (or to nothing, after locking in).
+  onIntroChanged: if (!intro && alarm && service) Qt.callLater(service.endTakeover)
   readonly property string bannerLine: {
     if (kind === "granted") return "everything is unlocked. good work."
     if (kind === "start") return (mainTask ? "★ " + mainTask.text + " · " : "") + (snapshot.total || 0) + " to go"
@@ -46,24 +31,6 @@ Item {
       return (y ? "yesterday " + y.completed + " of " + y.total + (y.grade ? " · " + y.grade.toLowerCase() : "") + " · " : "") + "rank " + rank + " · everything is locked"
     }
     return (service && service.alarmName ? service.alarmName : "that one") + " is locked until today's work is done"
-  }
-  function clockText(until) {
-    var left = Math.max(0, Math.ceil(until - clock))
-    return Math.floor(left / 60) + ":" + ("0" + (left % 60)).slice(-2)
-  }
-  readonly property string status: {
-    if (!snapshot.setup) return "setting up"
-    if (snapshot.recovered) return "recovery · blocking off"
-    var count = snapshot.total ? (snapshot.completed || 0) + " of " + snapshot.total + " · " : ""
-    if (!snapshot.started) return readyToStart ? "ready" : count + "not started"
-    if (snapshot.locked) return count + "locked"
-    if (snapshot.fullUnlock) return count + "unlocked"
-    return count + "unlocked " + Math.max(1, Math.ceil(((snapshot.until || 0) - clock) / 60)) + "m"
-  }
-  readonly property string blockedSummary: {
-    var all = (snapshot.settings.sites || []).concat(snapshot.settings.apps || [])
-    if (!all.length) return "nothing blocked yet"
-    return all.slice(0, 5).join(" · ") + (all.length > 5 ? " +" + (all.length - 5) : "")
   }
   // The takeover that plays when something blocked was just reached.
   readonly property bool alarm: !!service && service.alarmAt > 0
@@ -93,23 +60,6 @@ Item {
       out += i < shown || target.charAt(i) === " " ? target.charAt(i) : noise.charAt(Math.floor(Math.random() * noise.length))
     return out
   }
-  // Clickable answers the agent (or the first-run question) is offering.
-  readonly property string choicesKey: JSON.stringify(chat.choices || null)
-  readonly property var choices: { var c = JSON.parse(choicesKey); return c ? c.options || [] : [] }
-  readonly property bool manyChoices: { var c = JSON.parse(choicesKey); return !!c && !!c.multiple }
-  property var picked: []
-  onChoicesKeyChanged: picked = []
-  function pick(option) {
-    if (!manyChoices) { service.say(option); return }
-    picked = picked.indexOf(option) >= 0 ? picked.filter(function(o) { return o !== option }) : picked.concat([option])
-  }
-  function seconds(until) { return Math.max(0, Math.ceil(until - clock)) }
-  function pendingText(change) {
-    var verb = change.action === "delete" ? "drops" : change.action === "main" ? "becomes main" : "rewords"
-    return verb + " in " + seconds(change.readyAt) + "s · say cancel to stop it"
-  }
-
-  Timer { interval: 80; running: root.open && !!root.chat.busy; repeat: true; onTriggered: root.spinnerFrame = (root.spinnerFrame + 1) % root.spinnerFrames.length }
 
   Variants {
     model: Quickshell.screens
@@ -124,7 +74,8 @@ Item {
       WlrLayershell.namespace: "local-focus-overlay"
       WlrLayershell.layer: WlrLayer.Overlay
       WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
-      onVisibleChanged: if (visible) Qt.callLater(function() { prompt.forceActiveFocus() })
+      onVisibleChanged: if (visible) Qt.callLater(function() { keys.forceActiveFocus() })
+      Item { id: keys; focus: true; Keys.onPressed: function(event) { root.service.close(); event.accepted = true } }
 
       // Dark enough to read over without needing compositor blur, which a plugin should not switch on for you.
       Rectangle { anchors.fill: parent; color: Util.alpha(Color.background, 0.84) }
@@ -133,8 +84,6 @@ Item {
         visible: root.alarm
         ink: root.kind === "granted" ? Color.accent : root.tone
         running: root.alarm && window.visible
-        opacity: root.intro ? 1 : 0.22
-        Behavior on opacity { NumberAnimation { duration: 500 } }
       }
       MouseArea { anchors.fill: parent; onClicked: root.service.close() }
       Column {
@@ -188,301 +137,6 @@ Item {
               Behavior on opacity { NumberAnimation { duration: 300 } }
               text: root.quote
               color: Color.menu.text; font.pixelSize: Style.font.subtitle; font.italic: true
-            }
-          }
-        }
-      }
-
-      Ui.BorderSurface {
-        id: card
-        readonly property int pad: Style.space(28)
-        width: Math.min(Style.space(760), parent.width - Style.gapsOut * 8)
-        height: Math.min(body.implicitHeight + pad * 2, parent.height - Style.gapsOut * 8)
-        x: (parent.width - width) / 2
-        // Grows downward from a fixed line, like a launcher, so the prompt never jumps.
-        y: Math.max(Style.gapsOut * 4, Math.min(parent.height * 0.18, parent.height - height - Style.gapsOut * 4))
-        color: Color.menu.background
-        borderSpec: Border.surfaceSpec("menu", "border", root.strictness === "lockdown" ? root.tone : Color.menu.border, Math.max(1, Style.space(2)))
-        radius: Style.cornerRadius
-        opacity: root.intro ? 0 : 1
-        // Fades in after a takeover; vanishes at once when one begins.
-        Behavior on opacity { enabled: !root.intro; NumberAnimation { duration: 320 } }
-        Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-        MouseArea { anchors.fill: parent }
-        Canvas {
-          // Scanlines, for the stricter modes.
-          anchors.fill: parent
-          visible: root.harsh
-          opacity: 0.07
-          onPaint: {
-            var ctx = getContext("2d")
-            ctx.clearRect(0, 0, width, height)
-            ctx.fillStyle = root.tone
-            for (var y = 0; y < height; y += 3) ctx.fillRect(0, y, width, 1)
-          }
-          onVisibleChanged: requestPaint()
-          onHeightChanged: requestPaint()
-        }
-
-        ColumnLayout {
-          id: body
-          anchors { left: parent.left; right: parent.right; top: parent.top; margins: card.pad }
-          spacing: Style.space(16)
-
-          RowLayout {
-            Layout.fillWidth: true
-            Line { text: "FOCUS"; color: root.strictness === "lockdown" ? root.tone : Color.menu.text; font.pixelSize: Style.font.title; font.weight: Font.Bold; font.letterSpacing: Style.space(4); Layout.fillWidth: true }
-            Line { text: "[ " + (root.snapshot.setup ? root.rank.toUpperCase() + " · " : "") + root.status.toUpperCase() + " ]"; color: root.snapshot.locked && root.snapshot.setup ? root.tone : Color.muted; font.pixelSize: Style.font.bodySmall; font.letterSpacing: Style.space(1) }
-          }
-          Rectangle {
-            Layout.fillWidth: true; Layout.topMargin: -Style.space(6); height: Math.max(1, Style.space(2))
-            color: Util.alpha(Color.menu.text, 0.12)
-            Rectangle {
-              height: parent.height; color: root.tone
-              width: parent.width * (root.snapshot.total ? (root.snapshot.completed || 0) / root.snapshot.total : 0)
-              Behavior on width { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
-            }
-          }
-
-          // How strict Focus is today, as a level you can click. It goes up any time; down only before the day starts.
-          RowLayout {
-            visible: !!root.snapshot.setup
-            Layout.fillWidth: true
-            Layout.topMargin: -Style.space(6)
-            spacing: Style.space(6)
-            Repeater {
-              model: root.levels
-              delegate: Item {
-                id: step
-                required property string modelData
-                required property int index
-                readonly property int current: root.levels.indexOf(root.strictness)
-                readonly property bool reachable: !root.snapshot.started || index >= current
-                Layout.fillWidth: true
-                implicitHeight: stepLabel.implicitHeight + Style.space(12)
-                Rectangle {
-                  anchors { left: parent.left; right: parent.right; top: parent.top }
-                  height: Math.max(2, Style.space(3))
-                  color: step.index <= step.current ? root.tone : Util.alpha(Color.menu.text, stepArea.containsMouse && step.reachable ? 0.35 : 0.12)
-                  Behavior on color { ColorAnimation { duration: 160 } }
-                }
-                Line {
-                  id: stepLabel
-                  anchors { left: parent.left; bottom: parent.bottom }
-                  text: step.modelData.toUpperCase()
-                  color: step.index === step.current ? root.tone : stepArea.containsMouse && step.reachable ? Color.menu.text : Color.muted
-                  opacity: step.reachable ? 1 : 0.35
-                  font.pixelSize: Style.font.caption; font.letterSpacing: Style.space(2); font.weight: step.index === step.current ? Font.Bold : Font.Normal
-                }
-                MouseArea {
-                  id: stepArea
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: step.reachable && step.index !== step.current ? Qt.PointingHandCursor : Qt.ArrowCursor
-                  onClicked: if (step.index !== step.current) root.service.send({op: "settings", values: {strictness: step.modelData}})
-                }
-              }
-            }
-          }
-
-          Flickable {
-            id: list
-            visible: tasks.implicitHeight > 0
-            Layout.fillWidth: true
-            Layout.preferredHeight: Math.min(tasks.implicitHeight, Math.max(Style.space(120), window.height * 0.42))
-            contentHeight: tasks.implicitHeight
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            ColumnLayout {
-              id: tasks
-              width: list.width
-              spacing: Style.space(10)
-              Repeater {
-                model: root.snapshot.carry || []
-                delegate: RowLayout {
-                  required property var modelData
-                  Layout.fillWidth: true
-                  spacing: Style.space(12)
-                  Line { text: "↻"; color: Color.muted; font.pixelSize: Style.font.heading; Layout.preferredWidth: Style.space(18); Layout.alignment: Qt.AlignTop }
-                  Line { text: modelData.text; color: Color.muted; font.pixelSize: Style.font.heading; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                  Line { text: "from yesterday"; color: Color.muted; font.pixelSize: Style.font.bodySmall; Layout.alignment: Qt.AlignTop }
-                }
-              }
-              Repeater {
-                model: root.snapshot.tasks || []
-                delegate: RowLayout {
-                  id: row
-                  required property var modelData
-                  readonly property bool passed: modelData.status === "passed"
-                  // A verdict that just landed glows for a few seconds.
-                  readonly property real verdictAt: (modelData.verdicts || []).length ? modelData.verdicts[modelData.verdicts.length - 1].at : 0
-                  readonly property bool fresh: verdictAt > 0 && root.clock - verdictAt < 4
-                  readonly property var change: (root.snapshot.pending || {})[modelData.id] || null
-                  Layout.fillWidth: true
-                  spacing: Style.space(12)
-                  Line {
-                    text: row.passed ? "✓" : modelData.main ? "★" : modelData.verdict === "fail" ? "×" : "·"
-                    color: row.passed || modelData.main ? root.tone : modelData.verdict === "fail" ? Color.urgent : Color.muted
-                    font.pixelSize: Style.font.heading
-                    Layout.preferredWidth: Style.space(18); Layout.alignment: Qt.AlignTop
-                  }
-                  ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Style.space(3)
-                    Line {
-                      text: modelData.text; font.pixelSize: Style.font.heading; Layout.fillWidth: true; wrapMode: Text.Wrap
-                      color: row.fresh ? (row.passed ? root.tone : Color.urgent) : row.passed ? Color.muted : Color.menu.text
-                      Behavior on color { ColorAnimation { duration: 900 } }
-                    }
-                    Line { visible: !!modelData.note; text: modelData.note || ""; color: Color.muted; font.pixelSize: Style.font.body; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                    Line { visible: !!row.change; text: row.change ? root.pendingText(row.change) : ""; color: root.tone; font.pixelSize: Style.font.body }
-                    Line {
-                      visible: !!modelData.timer && !row.passed
-                      text: !modelData.timer ? "" : modelData.timer.done ? "timer finished · " + modelData.timer.minutes + " minutes" : "timer " + root.clockText(modelData.timer.until)
-                      color: root.tone; font.pixelSize: Style.font.body
-                    }
-                  }
-                  Line {
-                    visible: text !== ""
-                    text: row.passed && modelData.by === "external" ? "external" : (row.passed && modelData.basis === "claim") || (!row.passed && modelData.onWord) ? "on your word" : modelData.main && row.passed ? "main" : ""
-                    color: Color.muted; font.pixelSize: Style.font.bodySmall; Layout.alignment: Qt.AlignTop
-                  }
-                }
-              }
-            }
-          }
-
-          Rectangle { visible: list.visible; Layout.fillWidth: true; height: Math.max(1, Style.space(1)); color: Util.alpha(Color.menu.text, 0.12) }
-
-          ColumnLayout {
-            visible: !!root.snapshot.challenge
-            Layout.fillWidth: true
-            spacing: Style.space(6)
-            Line {
-              text: root.snapshot.challenge ? root.snapshot.challenge.code : ""
-              color: root.tone; font.pixelSize: Style.font.display; font.letterSpacing: Style.space(2)
-              Layout.fillWidth: true; wrapMode: Text.WrapAnywhere
-            }
-            Line {
-              color: Color.muted; font.pixelSize: Style.font.body
-              text: !root.snapshot.challenge ? "" : root.snapshot.challenge.readyAt === null ? "Type this exactly for 15 minutes of access. It is logged."
-                : "Unlocking in " + root.seconds(root.snapshot.challenge.readyAt) + "s"
-            }
-          }
-
-          ColumnLayout {
-            visible: root.lines.length > 0 || !!root.chat.busy
-            Layout.fillWidth: true
-            spacing: Style.space(8)
-            Line {
-              visible: root.alarm && root.kind === "denied" && root.quote !== ""
-              text: "// " + root.quote
-              color: Color.muted; font.pixelSize: Style.font.subtitle; font.italic: true
-              Layout.fillWidth: true; wrapMode: Text.Wrap
-            }
-            Repeater {
-              model: root.lines
-              delegate: Line {
-                required property var modelData
-                required property int index
-                readonly property bool newest: index === root.lines.length - 1
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                text: (modelData.role === "user" ? "› " : "") + modelData.text + (modelData.live ? " ▍" : "")
-                font.pixelSize: modelData.role === "user" ? Style.font.subtitle : Style.font.heading
-                color: modelData.role === "user" ? Color.muted : Color.menu.text
-                opacity: newest || modelData.role === "user" ? 1 : 0.45
-                lineHeight: 1.25
-              }
-            }
-            Line {
-              visible: !!root.chat.busy && !root.chat.streaming
-              text: root.spinnerFrames[root.spinnerFrame] + "  " + (root.chat.activity || "thinking")
-              color: Color.muted; font.pixelSize: Style.font.subtitle
-              Layout.fillWidth: true; elide: Text.ElideRight
-            }
-          }
-
-          Flow {
-            visible: root.choices.length > 0 && !root.chat.busy
-            Layout.fillWidth: true
-            spacing: Style.space(8)
-            Repeater {
-              model: root.choices
-              delegate: Rectangle {
-                required property string modelData
-                readonly property bool on: root.picked.indexOf(modelData) >= 0
-                width: chip.implicitWidth + Style.space(22); height: chip.implicitHeight + Style.space(12)
-                radius: Style.cornerRadius
-                color: on ? Util.alpha(root.tone, 0.2) : hover.containsMouse ? Util.alpha(Color.menu.text, 0.08) : "transparent"
-                border.width: 1; border.color: on ? root.tone : Util.alpha(Color.menu.text, 0.28)
-                Line { id: chip; anchors.centerIn: parent; text: (parent.on ? "✓ " : "") + modelData; color: parent.on ? root.tone : Color.menu.text; font.pixelSize: Style.font.subtitle }
-                MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pick(modelData) }
-              }
-            }
-          }
-
-          RowLayout {
-            Layout.fillWidth: true
-            spacing: Style.space(12)
-            Line { text: "›"; color: root.tone; font.pixelSize: Style.font.heading; font.weight: Font.DemiBold; Layout.alignment: Qt.AlignTop }
-            TextInput {
-              id: prompt
-              Layout.fillWidth: true
-              color: Color.menu.text
-              font.family: Style.font.family
-              font.pixelSize: Style.font.heading
-              wrapMode: TextInput.Wrap
-              selectionColor: Style.selectionFill
-              selectedTextColor: Color.menu.text
-              maximumLength: 4000
-              focus: true
-              cursorDelegate: Rectangle { width: Style.space(8); color: root.tone; opacity: prompt.activeFocus ? 0.9 : 0 }
-              property string ghost: root.picked.length ? "add your own, or press enter" : root.readyToStart ? "press enter to lock in" : root.chat.suggestion || (!root.snapshot.agent ? "type a task" : !root.snapshot.setup ? "" : !root.snapshot.started ? "say what today holds" : root.snapshot.locked ? "say what's done" : "")
-              function submit() {
-                if (!text.trim() && !root.picked.length && root.readyToStart) { root.service.send({op: "start"}); return }
-                var words = root.picked.concat(text.trim() ? [text.trim()] : []).join(", ") || root.chat.suggestion || ""
-                if (!words) return
-                root.service.say(words)
-                text = ""
-              }
-              Keys.onPressed: function(event) {
-                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { submit(); event.accepted = true }
-                else if (event.key === Qt.Key_Escape) { root.service.close(); event.accepted = true }
-                else if ((event.key === Qt.Key_Right || event.key === Qt.Key_Left) && (event.modifiers & Qt.ControlModifier) && root.snapshot.setup) {
-                  var next = root.levels[root.levels.indexOf(root.strictness) + (event.key === Qt.Key_Right ? 1 : -1)]
-                  if (next) root.service.send({op: "settings", values: {strictness: next}})
-                  event.accepted = true
-                }
-                else if (event.key === Qt.Key_Tab) { if (!text && root.chat.suggestion) text = root.chat.suggestion; event.accepted = true }
-                else if (event.key === Qt.Key_Up && !text) {
-                  var said = (root.chat.messages || []).filter(function(m) { return m.role === "user" })
-                  if (said.length) text = said[said.length - 1].text
-                  event.accepted = true
-                }
-              }
-              Line {
-                visible: !prompt.text
-                x: Style.space(14)
-                text: prompt.ghost
-                color: root.readyToStart ? root.tone : Color.muted; font.pixelSize: Style.font.heading
-                opacity: root.readyToStart || root.chat.suggestion ? 0.9 : 0.55
-              }
-            }
-          }
-
-          RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: -Style.space(4)
-            Line {
-              Layout.fillWidth: true; elide: Text.ElideRight
-              text: root.service && root.service.error ? root.service.error : root.snapshot.blockingError ? root.snapshot.blockingError : root.blockedSummary
-              color: (root.service && root.service.error) || root.snapshot.blockingError ? Color.urgent : Color.muted
-              font.pixelSize: Style.font.bodySmall; opacity: 0.8
-            }
-            Line {
-              text: (root.choices.length ? "click to pick · " : "") + (root.readyToStart && !prompt.text ? "enter locks in · " : root.chat.suggestion && !prompt.text && !root.picked.length ? "enter accepts · " : "enter sends · ") + "esc closes"
-              color: Color.muted; font.pixelSize: Style.font.bodySmall; opacity: 0.8
             }
           }
         }

@@ -29,11 +29,32 @@ Item {
   property real alarmAt: 0
   property string alarmKind: ""
   property string alarmName: ""
+  // view is "" (closed), "open" (the dropdown under the bar icon) or "takeover" (a full-screen moment).
   function takeover(kind, name) {
+    snoozeUntil = 0
+    if (!lockProbe.running) lockProbe.running = true
     alarmKind = kind
     alarmName = name
     alarmAt = Date.now()
-    openHome()
+    var fresh = !view
+    view = "takeover"
+    focusScreen()
+    if (fresh) send({op: "opened"})
+    if (shell) shell.summon("local.focus", "{}")
+  }
+  // The moment has played: the dropdown takes over, except after locking in, when you get on with it.
+  function endTakeover() {
+    if (view !== "takeover") return
+    alarmAt = 0
+    if (alarmKind === "start") { view = ""; send({op: "closed"}) }
+    else view = "open"
+    if (shell) shell.hide("local.focus")
+  }
+  // The host tells us the full-screen surface went away; only a takeover the user dismissed needs cleaning up.
+  function overlayClosed() { if (view === "takeover") dismissed() }
+  function focusScreen() {
+    var monitor = Hyprland.focusedMonitor
+    screenName = monitor ? monitor.name : ""
   }
   function alarm(name) { takeover("denied", name) }
   // Previews show a look without changing any state.
@@ -52,19 +73,16 @@ Item {
   }
   function say(text) { send({op: "say", text: text}) }
 
-  function opened() {
-    if (view) return
-    var monitor = Hyprland.focusedMonitor
-    screenName = monitor ? monitor.name : ""
-    view = "open"
-    send({op: "opened"})
-  }
-  function show() {
+  function show(screen) {
     if (!lockProbe.running) lockProbe.running = true
-    opened()
-    if (shell) shell.summon("local.focus", "{}")
+    if (view === "open") return
+    var fresh = !view
+    if (screen) screenName = screen
+    else focusScreen()
+    view = "open"
+    if (fresh) send({op: "opened"})
   }
-  function openHome() { snoozeUntil = 0; show() }
+  function openHome(screen) { snoozeUntil = 0; show(screen) }
   // View state only; the host calls this from shell.hide(), so never call shell.hide() here.
   function dismissed() {
     if (!view) return
@@ -76,8 +94,9 @@ Item {
   }
   function close() {
     if (!view) return
+    var overlay = view === "takeover"
     dismissed()
-    if (shell) shell.hide("local.focus")
+    if (overlay && shell) shell.hide("local.focus")
   }
   function autoOpen() {
     if (!(wantsAttention && lockKnown && !screenLocked && !view && !state.auth && Date.now() >= snoozeUntil)) return
