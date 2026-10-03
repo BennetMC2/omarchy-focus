@@ -244,7 +244,7 @@ Item {
           Layout.fillWidth: true
           wrapMode: Text.Wrap
           text: (modelData.role === "user" ? "› " : "") + modelData.text + (modelData.live ? " ▍" : "")
-          font.pixelSize: modelData.role === "user" ? Style.font.subtitle : Style.font.body
+          font.pixelSize: modelData.role === "user" ? Style.font.bodySmall : Style.font.body
           color: modelData.role === "user" ? Color.muted : Color.menu.text
           opacity: newest || modelData.role === "user" ? 1 : 0.45
           lineHeight: 1.2
