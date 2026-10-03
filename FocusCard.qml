@@ -441,8 +441,36 @@ Item {
       Ui.PanelSectionHeader { text: "AGENT"; foreground: root.foreground }
       Line {
         Layout.fillWidth: true; wrapMode: Text.Wrap
-        text: root.backend.ok === false ? root.backend.error : (root.backend.label || "")
+        text: root.backend.ok === false ? root.backend.error : (root.backend.label || "") + (root.backend.auto ? " · the agent Omarchy is set to" : "")
         color: root.backend.ok === false ? Color.urgent : root.dim; font.pixelSize: Style.font.caption
+      }
+      // Cost is the model: one click for the cheap one. Other agents list theirs with /models.
+      RowLayout {
+        visible: root.backend.provider === "claude"
+        Layout.fillWidth: true
+        spacing: Style.spacing.md
+        Repeater {
+          model: [{id: "haiku", label: "Low cost"}, {id: "sonnet", label: "Balanced"}, {id: "opus", label: "Best"}]
+          delegate: Ui.Button {
+            required property var modelData
+            Layout.fillWidth: true
+            Layout.preferredWidth: 1
+            text: modelData.label
+            tooltipText: "Claude " + modelData.id
+            selected: (root.backend.model || "sonnet") === modelData.id
+            bordered: true
+            foreground: root.foreground
+            accent: root.tone
+            fontSize: Style.font.caption
+            verticalPadding: Style.spacing.xs
+            onClicked: root.service.send({op: "settings", values: {model: modelData.id}})
+          }
+        }
+      }
+      Line {
+        visible: root.backend.provider !== "claude" && root.backend.ok !== false
+        text: "/models lists what it can run · /model NAME picks one"
+        color: root.dim; font.pixelSize: Style.font.caption; opacity: 0.7
       }
       Line {
         Layout.fillWidth: true; wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight

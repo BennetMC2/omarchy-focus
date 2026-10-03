@@ -404,7 +404,7 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(ValueError): change(**bad)
         with tempfile.TemporaryDirectory(dir=Path.home()) as inside:
             old=Model({'version':3,'settings':{'evidence':inside,'agent':'claude','sites':['x.com']},'days':{},'current':'','recovered':False})
-            self.assertEqual(old.s['settings']['roots'],[str(Path(inside).resolve())]); self.assertEqual(old.s['settings']['provider'],'claude')
+            self.assertEqual(old.s['settings']['roots'],[str(Path(inside).resolve())]); self.assertEqual(old.s['settings']['provider'],'auto')
             self.assertEqual(old.s['settings']['sites'],['x.com']); self.assertNotIn('evidence',old.s['settings']); self.assertNotIn('agent',old.s['settings'])
     def test_the_agent_process_gets_no_tools_of_its_own_and_no_stray_secrets(self):
         class Stub: model=Model()
@@ -422,6 +422,87 @@ class ConfigTests(unittest.TestCase):
                 # An empty profile: no cloud login is available for the harness to fall back on.
                 self.assertEqual(local['CLAUDE_CONFIG_DIR'],str(Path(tmp)/'agent-ollama')); self.assertEqual(os.listdir(local['CLAUDE_CONFIG_DIR']),[])
                 self.assertNotIn('GITHUB_TOKEN',local)
+
+class AgentChoiceTests(unittest.TestCase):
+    """Focus uses whichever coding agent the machine already has, and keeps the ones with tools of their own in a jail."""
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory(); self.home=Path(self.tmp.name).resolve()
+        self.bin=self.home/'tools'; self.bin.mkdir()
+        for name in ('claude','codex','opencode'): self.program(name,'#!/bin/sh\necho real\n')
+        self.patches=[patch.object(agent.Path,'home',return_value=self.home),patch.object(agent.shutil,'which',side_effect=lambda n: str(self.bin/n) if (self.bin/n).exists() else ('/usr/bin/bwrap' if n=='bwrap' else None)),
+                      patch.dict(os.environ,{'HOME':str(self.home)})]
+        for p in self.patches: p.start()
+        os.environ.pop('FOCUS_AGENT_CMD',None)
+    def tearDown(self):
+        for p in self.patches: p.stop()
+        self.tmp.cleanup()
+    def program(self,name,text): (self.bin/name).write_text(text); (self.bin/name).chmod(0o755)
+    def default(self,name): (self.home/'.config/omarchy/defaults').mkdir(parents=True,exist_ok=True); (self.home/'.config/omarchy/defaults/agent').write_text(name+'\n')
+    def test_auto_follows_the_agent_chosen_for_omarchy(self):
+        self.assertEqual(agent.resolve({'provider':'auto'}),'claude')          # nothing chosen: the first one installed
+        self.default('codex'); self.assertEqual(agent.resolve({'provider':'auto'}),'codex')
+        self.default('opencode'); self.assertEqual(agent.resolve({'provider':'auto'}),'opencode')
+        self.default('gemini'); self.assertEqual(agent.resolve({'provider':'auto'}),'claude')   # one Focus cannot drive: fall back to one it can
+        self.assertEqual(agent.resolve({'provider':'opencode'}),'opencode')    # an explicit choice wins
+    def test_an_install_stub_is_not_an_installed_agent(self):
+        self.program('codex','#!/bin/bash\nexport MISE_MINIMUM_RELEASE_AGE=0\nmise use -g --quiet "codex" || exit 1\n')
+        self.assertEqual(agent.binary('codex'),''); self.default('codex'); self.assertEqual(agent.resolve({'provider':'auto'}),'claude')
+        info=backend.describe_agent('codex',{'model':''}); self.assertFalse(info['ok']); self.assertIn('not installed',info['error'])
+    def test_agents_with_their_own_tools_only_run_jailed(self):
+        class Stub: model=Model()
+        with tempfile.TemporaryDirectory() as state, patch.object(common,'STATE',Path(state)), patch.object(common,'SOCKET',Path(state)/'control.sock'):
+            for kind,private in (('codex','.codex'),('opencode','.local/share/opencode')):
+                session=agent.make_session(type('H',(),{'model':Model({'version':3,'settings':{'provider':kind,'model':'small-one'},'days':{},'current':'','recovered':False})})())
+                self.assertIsInstance(session,agent.ExecSession); session.token='tok'
+                command,env,_=session.launch(session.host.model.s['settings'])
+                self.assertEqual(command[0],'/usr/bin/bwrap'); self.assertIn('--unshare-user',command)
+                # The home directory is replaced by an empty one; only the agent's own sign-in folder is put back.
+                self.assertEqual(command[command.index('--tmpfs',command.index('/tmp'))+1],str(self.home))
+                binds=[command[i+1] for i,word in enumerate(command) if word in ('--bind','--ro-bind')]
+                self.assertIn(str(self.home/private),binds)
+                for hidden in ('.ssh','Projects','.claude','.config/omarchy'): self.assertFalse(any(b==str(self.home/hidden) for b in binds),hidden)
+                self.assertFalse(any(b==str(self.home) for b in binds)); self.assertIn(str(Path(state)/'control.sock'),binds)
+                self.assertIn('small-one',command); self.assertEqual(set(env)-{'OPENCODE_CONFIG_CONTENT'},set(env)&{'HOME','PATH','USER','LOGNAME','LANG','TERM'})
+                if kind=='codex':
+                    for feature in ('shell_tool','unified_exec','multi_agent','browser_use'): self.assertEqual(command[command.index(feature)-1],'--disable')
+                    self.assertIn('mcp_servers.focus.default_tools_approval_mode="approve"',command); self.assertEqual(command[command.index('--sandbox')+1],'read-only')
+                else:
+                    config=json.loads(env['OPENCODE_CONFIG_CONTENT']); self.assertFalse(any(config['tools'].values())); self.assertEqual(config['mcp']['focus']['environment']['FOCUS_SESSION'],'tok')
+            with patch.object(agent.shutil,'which',side_effect=lambda n: None if n=='bwrap' else str(self.bin/n)):
+                with self.assertRaises(OSError): session.launch(session.host.model.s['settings'])
+        with patch.object(agent.shutil,'which',side_effect=lambda n: None if n=='bwrap' else str(self.bin/n)):
+            info=backend.describe_agent('codex',{'model':''}); self.assertFalse(info['ok']); self.assertIn('bwrap',info['error'])
+        self.assertIsInstance(agent.make_session(Stub()),agent.Session)   # Claude Code has no tools of its own left, so it runs as before
+    def test_a_turn_per_process_agent_runs_a_whole_turn(self):
+        # Stands in for an agent with no long-running mode: prints its events and exits. Run without the jail, which the test above covers.
+        self.program('codex','#!/bin/sh\ncat >/dev/null\necho \'{"type":"item.started","item":{"type":"mcp_tool_call","tool":"add_tasks","arguments":{}}}\'\necho \'{"type":"item.completed","item":{"type":"agent_message","text":"Two on the list."}}\'\n')
+        seen=[]
+        class Host:
+            model=Model({'version':3,'settings':{'provider':'codex'},'days':{},'current':'','recovered':False})
+            def recap(self): return ''
+            def digest(self): return '<focus_state/>'
+            def watch(self,stream,callback): self.stream,self.callback=stream,callback
+            def unwatch(self,stream): pass
+            def turn_started(self): seen.append('started')
+            def turn_progress(self,text,activity): seen.append(('progress',text,activity))
+            def turn_finished(self,text): seen.append(('finished',text))
+            def turn_failed(self,text): seen.append(('failed',text))
+        with tempfile.TemporaryDirectory() as state, patch.object(common,'STATE',Path(state)), patch.object(agent,'jail',return_value=[]):
+            host=Host(); session=agent.make_session(host); session.send('<user>today: two things</user>')
+            for _ in range(200):
+                if not session.busy: break
+                import select as wait
+                if wait.select([host.stream],[],[],0.05)[0]: host.callback()
+        self.assertEqual(seen,['started',('progress','','writing the list'),('progress','Two on the list.',None),('finished','Two on the list.')])
+        self.assertFalse(session.busy); self.assertIsNone(session.proc)
+    def test_each_agents_events_are_read_into_text_activity_and_failure(self):
+        read=agent.read_event
+        self.assertEqual(read('codex',{'type':'item.completed','item':{'type':'agent_message','text':'Added  both.'}}),('Added both.',None,''))
+        self.assertEqual(read('codex',{'type':'item.started','item':{'type':'mcp_tool_call','tool':'add_tasks','arguments':{}}}),('','writing the list',''))
+        self.assertEqual(read('codex',{'type':'error','message':'boom'})[2],'boom'); self.assertEqual(read('codex',{'type':'turn.started'}),('',None,''))
+        self.assertEqual(read('opencode',{'type':'text','part':{'text':'Done.'}}),('Done.',None,''))
+        self.assertEqual(read('opencode',{'type':'tool_use','part':{'tool':'focus_read_file','state':{'input':{'path':'/x/notes.md'}}}}),('','reading notes.md',''))
+        self.assertIn('free tier',read('opencode',{'type':'error','error':{'data':{'message':"OpenCode's free tier can only be used from within OpenCode"}}})[2])
 
 class FakeOllama:
     """Answers the one question Focus asks an Ollama server: what is this model and what can it do."""

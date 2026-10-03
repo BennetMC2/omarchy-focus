@@ -11,6 +11,7 @@ import struct
 import subprocess
 import threading
 import time
+import traceback
 
 import agent
 import blocking
@@ -27,8 +28,8 @@ from tools import Tools
 FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time? Pick any below, or type your own."
 # Offered as clickable picks with the first question; anything else can be typed.
 COMMON_SITES = ['youtube.com', 'x.com', 'reddit.com', 'instagram.com', 'facebook.com', 'tiktok.com', 'twitch.tv', 'netflix.com', 'linkedin.com', 'news.ycombinator.com']
-HELP = ('/config shows the model and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider claude|ollama · '
-        '/model NAME · /endpoint URL · /forget deletes the conversation and any stored screenshot')
+HELP = ('/config shows the agent and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider auto|claude|codex|opencode|ollama · '
+        '/model NAME (/models lists them; for Claude: haiku is the low-cost one) · /endpoint URL · /forget deletes the conversation and any stored screenshot')
 YES, NO = ('y', 'yes', 'allow', 'ok', 'okay', 'sure', 'do it'), ('n', 'no', 'deny', 'cancel', 'not now', 'stop')
 NO_AGENT = "I need Claude Code to work, and I can't find it. Install it with `omarchy default agent claude`, sign in, then open me again."
 EVENTS = {
@@ -74,7 +75,7 @@ class Daemon:
         settings = self.model.s['settings']
         self.config = (settings['provider'], settings['model'], settings['endpoint'], tuple(settings['roots']))
         self.chat = Chat()
-        self.session = agent.Session(self)
+        self.session = agent.make_session(self)
         self.tools = Tools(self.model, self)
         self.selector = selectors.DefaultSelector()
         self.clients = {}
@@ -171,14 +172,31 @@ class Daemon:
         changed_backend = self.config is not None and config[:3] != self.config[:3]
         was_busy, self.config = self.session.busy, config
         self.session.stop()
-        self.session.queue.clear()
+        # A different agent may need a different kind of session altogether.
+        self.session = agent.make_session(self)
         if changed_backend:
             # A different model is a different recipient: it does not inherit pending approvals or the earlier conversation.
             self.chat.consent = None
             self.links.clear()
             self.discard_shot()
             self.session.forget = True
+            self.chat.add('system', 'Now running on %s. It starts fresh: nothing said to the previous one was passed on.' % self.info()['label'])
         if was_busy: self.turn_failed('Settings changed mid-reply, so that reply was dropped. Say it again.')
+
+    def models(self):
+        """What the current agent can run, cheapest first where Focus knows the order."""
+        kind = self.info()['provider']
+        try:
+            if kind == 'claude': return 'Claude models: haiku (lowest cost, fastest) · sonnet (default) · opus (most capable). Set one with /model NAME.'
+            if kind == 'codex':
+                listed = read(Path.home()/'.codex/models_cache.json').get('models') or []
+                return 'Codex models: ' + (' · '.join(m.get('slug', '') for m in listed if isinstance(m, dict) and m.get('slug')) or 'none cached; run codex once') + '. Set one with /model NAME.'
+            if kind == 'opencode':
+                listed = common.run([agent.binary('opencode'), 'models'], timeout=20).split()
+                return 'OpenCode models: ' + ' · '.join(listed[:40]) + '. Set one with /model NAME.'
+            listed = json.loads(common.run(['curl', '-s', '--max-time', '3', self.model.s['settings']['endpoint'] + '/api/tags'])).get('models') or []
+            return 'Ollama models: ' + (' · '.join(m.get('name', '') for m in listed) or 'none pulled') + '. Set one with /model NAME.'
+        except Exception as exc: return 'Could not list models: ' + one_line(exc, 120)
 
     def command(self, text):
         """Typed by the user, handled here: configuration never depends on the model being reachable or willing."""
@@ -186,6 +204,7 @@ class Daemon:
         name, rest = (words[0].lower() if words else 'help'), ' '.join(words[1:])
         now, settings = time.time(), self.model.s['settings']
         change = lambda **values: self.model.apply({'op': 'settings', 'values': values}, now)
+        if name == 'models': return self.models()
         if name == 'folder':
             if rest.startswith('remove '):
                 target = str(Path(rest[7:].strip()).expanduser())
@@ -452,7 +471,12 @@ class Daemon:
                 while self.running:
                     # While the agent is talking, wake often enough that no streamed text waits on the throttle.
                     for key, _ in self.selector.select(timeout=0.04 if self.chat.busy else 0.25):
-                        key.data()
+                        # One misbehaving client or agent must never take the service, and the blocking with it, down.
+                        try: key.data()
+                        except Exception:
+                            traceback.print_exc()
+                            self.session.stop()
+                            self.turn_failed('Something went wrong talking to the agent. Say it again.')
                     # Streaming text publishes as it arrives; everything else on the half-second tick.
                     if self.chat.busy and time.time() - self.chat_at > 0.04:
                         self.chat_at = time.time()

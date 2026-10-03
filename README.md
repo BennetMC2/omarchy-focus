@@ -46,7 +46,7 @@ omarchy-shell local.focus preview denied    # or granted, morning, strip, honor,
 
 ## Install
 
-Needs Omarchy 4 (Quickshell shell), Python 3.11+, and Claude Code signed in. So far this has only run on its author's machine.
+Needs Omarchy 4 (Quickshell shell), Python 3.11+, and one coding agent you are already signed in to: Claude Code, Codex or OpenCode. Focus uses whichever one Omarchy is set to (`omarchy default agent`). So far this has only run on its author's machine.
 
 ```sh
 omarchy plugin add https://github.com/BennetMC2/omarchy-focus --enable
@@ -68,6 +68,20 @@ Then click the Focus icon in the bar. It walks you through the rest, including t
   - Screenshots: you approve the capture, see the image, and approve sending it. It is shown to the agent once and deleted.
 - **Approving is yours alone.** The agent can ask; it has no tool to grant itself a folder, a link, a provider or a model.
 - `/forget` (or `focusctl forget`) deletes the conversation, approved links and any stored screenshot. The conversation also clears each new day.
+
+### Which agent it uses
+
+Focus does not have its own login. It drives a coding agent you already have:
+
+| Agent | How it runs | Speed |
+|---|---|---|
+| Claude Code | One long-running session with all of its own tools switched off. | A reply in 2 to 5 seconds, streamed. |
+| OpenCode | A fresh process per reply, inside a sandbox. | About 10 to 15 seconds. |
+| Codex | A fresh process per reply, inside a sandbox. | About 15 to 25 seconds. |
+
+By default it follows `omarchy default agent`; `/provider claude|codex|opencode|ollama|auto` overrides that. Codex and OpenCode cannot have every tool of their own switched off, so Focus only runs them inside a sandbox (`bwrap`) where they can see their own sign-in files and Focus's tool socket and nothing else of your home directory; without `bwrap` they are refused. They are not shown screenshots yet.
+
+To keep the cost down, pick a smaller model: with Claude, click **Low cost** in the card (Haiku) or type `/model haiku`; with the others, `/models` lists what they can run.
 
 ### Choosing the model
 

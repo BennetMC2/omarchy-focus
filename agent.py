@@ -76,7 +76,7 @@ PASSED_ENV = ('HOME', 'PATH', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TERM', 'TMPD
 def environment(settings, token):
     env = {key: os.environ[key] for key in PASSED_ENV if key in os.environ}
     env['FOCUS_SESSION'] = token
-    if settings['provider'] == 'ollama':
+    if settings.get('provider') == 'ollama':
         # Point the harness at the chosen server and give it an empty profile, so it holds no cloud login to fall back on.
         profile = common.STATE/'agent-ollama'
         profile.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -84,18 +84,67 @@ def environment(settings, token):
                    DISABLE_TELEMETRY='1', DISABLE_ERROR_REPORTING='1', DISABLE_AUTOUPDATER='1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1')
     return env
 
-def binary():
-    """Claude Code, wherever Omarchy or its own installer put it; the shell's PATH does not always include it."""
-    found = shutil.which('claude')
-    if found: return found
-    for candidate in ('~/.local/share/mise/shims/claude', '~/.local/bin/claude', '~/.claude/local/claude'):
-        path = Path(candidate).expanduser()
-        if path.is_file() and os.access(path, os.X_OK): return str(path)
+# The coding agents Focus can drive. Each brings its own sign-in; Focus only attaches its tools.
+AGENTS = ('claude', 'codex', 'opencode')
+
+def binary(name='claude'):
+    """The real program for an agent, wherever Omarchy or its own installer put it. Omarchy's install stubs do not count."""
+    candidates = [shutil.which(name)] + [str(Path(c).expanduser()) for c in
+                  ('~/.local/share/mise/shims/' + name, '~/.local/bin/' + name, '~/.claude/local/claude' if name == 'claude' else '')]
+    for found in candidates:
+        if not found or not os.path.isfile(found) or not os.access(found, os.X_OK): continue
+        real = os.path.realpath(found)
+        try:
+            with open(real, 'rb') as stream: head = stream.read(400)
+        except OSError: continue
+        if b'mise use -g' in head: continue   # a stub that would install the agent, not the agent
+        if real.endswith('/mise') or os.path.basename(real) == 'mise':
+            where = subprocess.run(['mise', 'which', name], capture_output=True, text=True).stdout.strip()
+            if not where: continue
+            real = os.path.realpath(where)
+        return real
     return ''
+
+def resolve(settings):
+    """Which agent to use: the user's explicit choice, else the one chosen for Omarchy, else the first one installed."""
+    if os.environ.get('FOCUS_AGENT_CMD'): return 'claude'
+    chosen = settings.get('provider') or 'auto'
+    if chosen != 'auto': return chosen
+    try: preferred = (Path.home()/'.config/omarchy/defaults/agent').read_text().strip()
+    except OSError: preferred = ''
+    return next((name for name in [preferred] + list(AGENTS) if name in AGENTS and binary(name)), 'claude')
 
 def available():
     if os.environ.get('FOCUS_AGENT_CMD'): return 'test'
-    return 'claude' if binary() else ''
+    return next((name for name in AGENTS if binary(name)), '')
+
+def jail(program, private, scratch):
+    """Run an agent that keeps tools of its own where they have nothing to find: it sees its program, its own
+    sign-in files, an empty scratch folder and Focus's tool socket. Not the home directory, not the projects."""
+    bwrap = shutil.which('bwrap')
+    if not bwrap: raise OSError('This agent needs bubblewrap (the bwrap command) so Focus can keep it away from your files.')
+    home = str(Path.home())
+    command = [bwrap, '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup', '--die-with-parent', '--new-session',
+               '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
+               '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', '--tmpfs', home]
+    for path in ('/etc/resolv.conf', '/etc/ssl', '/etc/ca-certificates', '/etc/hosts', '/etc/passwd', '/etc/nsswitch.conf', '/etc/localtime'):
+        if os.path.exists(path): command += ['--ro-bind', path, path]
+    # The program's install folder (two levels up covers bin/ layouts) read-only, its own state read-write.
+    install = os.path.dirname(program)
+    if os.path.basename(install) == 'bin': install = os.path.dirname(install)
+    if not install.startswith(home + os.sep): install = ''   # under /usr already
+    for path in filter(None, [install, str(common.PLUGIN)]): command += ['--ro-bind', path, path]
+    for path in private:
+        path = str(Path(path).expanduser())
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        command += ['--bind', path, path]
+    return command + ['--bind', str(common.SOCKET), str(common.SOCKET), '--bind', str(scratch), str(scratch), '--chdir', str(scratch)]
+
+# Everything optional in Codex that would give it a tool of its own. Its tool host stays on: Focus's tools arrive through it.
+CODEX_OFF = ('shell_tool', 'unified_exec', 'unified_exec_tty', 'apps', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use',
+             'hooks', 'image_generation', 'in_app_browser', 'in_app_local_automation', 'multi_agent', 'plugins', 'plugin_sharing', 'remote_plugin',
+             'skill_search', 'skill_mcp_dependency_install', 'sleep_tool', 'goals', 'tool_suggest', 'workspace_dependencies', 'view_image')
+OPENCODE_OFF = ('bash', 'edit', 'write', 'read', 'grep', 'glob', 'list', 'patch', 'webfetch', 'websearch', 'task', 'todowrite', 'todoread', 'skill', 'lsp')
 
 def digest(state, now):
     """The state block sent with every message: compact, plain, complete."""
@@ -173,7 +222,7 @@ class Session:
         server = {'command': '/usr/bin/python3', 'args': [str(common.PLUGIN/'focus.py'), 'mcp'],
                   'env': {'FOCUS_STATE_HOME': str(common.STATE), 'FOCUS_SESSION': self.token}}
         # No built-in tools at all: the model can only call Focus's own, which enforce the limits themselves.
-        return [binary() or 'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
+        return [binary('claude') or 'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
                 '--model', settings.get('model') or 'sonnet', '--no-session-persistence', '--strict-mcp-config',
                 '--mcp-config', json.dumps({'mcpServers': {'focus': server}}), '--setting-sources', '', '--system-prompt', PERSONA,
                 '--tools', '', '--allowedTools', 'mcp__focus']
@@ -269,9 +318,118 @@ class Session:
         if proc is None: return
         self.host.unwatch(proc.stdout)
         for stream in (proc.stdin, proc.stdout):
-            try: stream.close()
+            try:
+                if stream: stream.close()
             except OSError: pass
         if proc.poll() is None:
             proc.terminate()
             try: proc.wait(timeout=2)
             except subprocess.TimeoutExpired: proc.kill(); proc.wait()
+
+
+class ExecSession(Session):
+    """For agents with no long-running mode (Codex, OpenCode): one jailed process per turn, the conversation carried in the prompt."""
+    TURN_LIMIT = 300
+
+    def __init__(self, host, kind):
+        super().__init__(host)
+        self.kind = kind
+        self.said = []
+
+    def ensure(self): pass   # nothing to warm: each turn starts its own process
+
+    def launch(self, settings):
+        program = binary(self.kind)
+        if not program: raise OSError('%s is not installed.' % self.kind)
+        scratch = common.STATE/'agent-scratch'
+        scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+        tools = {'FOCUS_STATE_HOME': str(common.STATE), 'FOCUS_SESSION': self.token}
+        server = ['/usr/bin/python3', str(common.PLUGIN/'focus.py'), 'mcp']
+        env = {key: os.environ[key] for key in ('HOME', 'PATH', 'USER', 'LOGNAME', 'LANG', 'TERM') if key in os.environ}
+        if self.kind == 'codex':
+            command = jail(program, ['~/.codex'], scratch) + [program, 'exec', '--json', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only']
+            for feature in CODEX_OFF: command += ['--disable', feature]
+            command += ['-c', 'mcp_servers.focus.command=%s' % json.dumps(server[0]), '-c', 'mcp_servers.focus.args=%s' % json.dumps(server[1:]),
+                        '-c', 'mcp_servers.focus.env={%s}' % ','.join('%s=%s' % (k, json.dumps(v)) for k, v in tools.items()),
+                        '-c', 'mcp_servers.focus.default_tools_approval_mode="approve"']
+            if settings.get('model'): command += ['-m', settings['model']]
+            return command + ['-'], env, True
+        env['OPENCODE_CONFIG_CONTENT'] = json.dumps({'autoupdate': False, 'share': 'disabled', 'tools': {name: False for name in OPENCODE_OFF},
+            'mcp': {'focus': {'type': 'local', 'command': server, 'environment': tools, 'enabled': True}}})
+        command = jail(program, ['~/.local/share/opencode', '~/.cache/opencode', '~/.local/state/opencode', '~/.config/opencode'], scratch)
+        return command + [program, 'run', '--format', 'json', '--pure'] + (['-m', settings['model']] if settings.get('model') else []), env, False
+
+    def pump(self):
+        if self.busy or not self.queue: return
+        body = self.queue.pop(0)
+        settings = self.host.model.s['settings']
+        self.token = secrets.token_hex(12)
+        # No memory between turns, so every turn carries the instructions, the day so far and the state.
+        prompt = PERSONA + '\n\n' + ('' if self.forget else self.host.recap()) + self.host.digest() + '\n' + body
+        try:
+            command, env, by_stdin = self.launch(settings)
+            self.proc = subprocess.Popen(command if by_stdin else command + [prompt], stdin=subprocess.PIPE if by_stdin else subprocess.DEVNULL,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, bufsize=0)
+            if by_stdin:
+                self.proc.stdin.write(prompt.encode()); self.proc.stdin.close()
+        except OSError as exc:
+            self.proc = None
+            self.host.turn_failed('The agent could not start: ' + one_line(exc, 200))
+            return
+        self.buffer, self.busy, self.last, self.said, self.forget = b'', True, time.time(), [], False
+        self.host.watch(self.proc.stdout, self.readable)
+        self.host.turn_started()
+
+    def readable(self):
+        try: data = os.read(self.proc.stdout.fileno(), 65536)
+        except OSError: data = b''
+        if data:
+            self.buffer += data
+            while b'\n' in self.buffer:
+                line, self.buffer = self.buffer.split(b'\n', 1)
+                try: event = json.loads(line)
+                except ValueError: continue
+                if isinstance(event, dict): self.event(event)
+            return
+        # The process ending is the end of the turn.
+        was_busy, failure = self.busy, getattr(self, 'failure', '')
+        self.failure = ''
+        self.stop()
+        if was_busy:
+            if failure: self.host.turn_failed(failure)
+            elif self.said: self.host.turn_finished(self.said[-1])
+            else: self.host.turn_failed('The agent ended without answering. Say it again.')
+        self.pump()
+
+    def event(self, e):
+        self.last = time.time()
+        said, activity, failure = read_event(self.kind, e)
+        if failure: self.failure = failure
+        if said: self.said.append(said)
+        if said or activity is not None: self.host.turn_progress(self.said[-1] if self.said else '', activity)
+
+    def stop(self):
+        token = self.token
+        super().stop()
+        self.token = token if self.busy else ''
+
+def read_event(kind, e):
+    """One line of an agent's event stream as (text said, activity, failure). Anything unrecognised is ignored."""
+    if kind == 'codex':
+        item = e.get('item') or {}
+        if e.get('type') == 'item.completed' and item.get('type') == 'agent_message': return one_line(item.get('text'), 2000), None, ''
+        if e.get('type') == 'item.started' and item.get('type') == 'mcp_tool_call': return '', describe(str(item.get('tool') or ''), item.get('arguments')), ''
+        if e.get('type') in ('error', 'turn.failed'): return '', None, one_line((e.get('error') or {}).get('message') if isinstance(e.get('error'), dict) else e.get('message') or 'Codex reported an error.', 300)
+        return '', None, ''
+    part = e.get('part') or {}
+    if e.get('type') == 'text': return one_line(part.get('text'), 2000), None, ''
+    if e.get('type') == 'tool_use': return '', describe(str(part.get('tool') or '').removeprefix('focus_'), (part.get('state') or {}).get('input')), ''
+    if e.get('type') == 'error':
+        error = e.get('error') or {}
+        return '', None, one_line(((error.get('data') or {}).get('message') if isinstance(error, dict) else '') or 'OpenCode reported an error.', 300)
+    return '', None, ''
+
+def make_session(host):
+    kind = resolve(host.model.s['settings'])
+    if kind in ('codex', 'opencode') and not os.environ.get('FOCUS_AGENT_CMD'): return ExecSession(host, kind)
+    return Session(host)

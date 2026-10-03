@@ -38,6 +38,18 @@ def describe_ollama(settings):
     else: info['ok'] = True
     return info
 
+OWNERS = {'codex': "OpenAI's servers", 'opencode': 'the provider OpenCode is signed in to'}
+
+def describe_agent(kind, settings):
+    """Codex or OpenCode: installed coding agents Focus drives inside a jail."""
+    import agent, shutil
+    name = settings.get('model') or 'its default model'
+    info = {'provider': kind, 'model': settings.get('model') or '', 'where': 'remote', 'ok': True, 'tools': True, 'vision': False, 'error': '',
+            'label': '%s (%s), on %s' % ('Codex' if kind == 'codex' else 'OpenCode', name, OWNERS[kind])}
+    if not agent.binary(kind): info.update(ok=False, error='%s is not installed. Type /provider auto to use the agent Omarchy is set to.' % kind)
+    elif not shutil.which('bwrap'): info.update(ok=False, error='%s keeps tools of its own, so Focus only runs it inside a sandbox, and bubblewrap (bwrap) is not installed.' % kind)
+    return info
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs): return None
 
@@ -52,9 +64,12 @@ class Backend:
     def signature(self, settings): return (settings['provider'], settings.get('model') or '', settings['endpoint'])
 
     def describe(self, settings):
+        import agent
         key = self.signature(settings)
-        if settings['provider'] == 'claude':
-            self.key, self.info = key, describe_claude(settings)
+        kind = settings['provider'] if settings['provider'] == 'ollama' else agent.resolve(settings)
+        if kind != 'ollama':
+            self.key, self.info = key, describe_claude(settings) if kind == 'claude' else describe_agent(kind, settings)
+            self.info['auto'] = settings['provider'] == 'auto'
             return self.info
         if key != self.key:
             self.key, self.at = key, 0

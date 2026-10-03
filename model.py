@@ -12,8 +12,9 @@ import uuid
 DEFAULTS = {'reset': '04:00', 'mode': 'all', 'minutes': 15, 'sites': [], 'apps': [], 'hosts': True,
             'strictness': 'standard', 'borders': True, 'strip': True, 'sound': False,
             # Where the agent runs, and the folders it may read. Only the user changes these, never the agent.
-            'provider': 'claude', 'model': '', 'endpoint': 'http://127.0.0.1:11434', 'roots': []}
-PROVIDERS = ('claude', 'ollama')
+            # provider "auto" follows the agent chosen for Omarchy itself (omarchy default agent).
+            'provider': 'auto', 'model': '', 'endpoint': 'http://127.0.0.1:11434', 'roots': []}
+PROVIDERS = ('auto', 'claude', 'codex', 'opencode', 'ollama')
 
 def endpoint(value):
     """A plain http(s) address for a model server: no credentials, no query, nothing surprising."""
@@ -297,7 +298,7 @@ class Model:
                 elif key in ('borders', 'strip', 'sound'):
                     if type(value) is not bool: raise ValueError('That setting is on or off.')
                 elif key == 'provider':
-                    if value not in PROVIDERS: raise ValueError('Choose claude or ollama.')
+                    if value not in PROVIDERS: raise ValueError('Choose auto, claude, codex, opencode or ollama.')
                 elif key == 'model':
                     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9._:/-]{0,100}', value): raise ValueError('A model id is letters, digits and . _ : / - only.')
                 elif key == 'endpoint':
@@ -310,6 +311,8 @@ class Model:
                 if d['started'] and ((key in ('sites','apps') and not set(new[key]).issubset(value)) or (key == 'hosts' and new[key] and not value)):
                     raise ValueError('Remove blocks before starting a day, or use the emergency override.')
                 new[key] = value
+            # A model name belongs to the agent it was chosen for; a different agent starts on its own default.
+            if new['provider'] != self.s['settings']['provider'] and 'model' not in values: new['model'] = ''
             self.s['settings'] = new
             record('settings', values=values)
         elif op == 'setup-done':
