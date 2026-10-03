@@ -118,7 +118,8 @@ Item {
       WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
       onVisibleChanged: if (visible) Qt.callLater(function() { prompt.forceActiveFocus() })
 
-      Rectangle { anchors.fill: parent; color: Color.menu.scrim }
+      // Dark enough to read over without needing compositor blur, which a plugin should not switch on for you.
+      Rectangle { anchors.fill: parent; color: Util.alpha(Color.background, 0.84) }
       MatrixRain {
         anchors.fill: parent
         visible: root.alarm
