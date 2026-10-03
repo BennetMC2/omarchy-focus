@@ -174,10 +174,33 @@ Item {
     onTriggered: if (!lockProbe.running) lockProbe.running = true
   }
 
+  // A browser showing a blocked page titles the tab with the address it could not load. Watching window titles
+  // catches that in any browser, whether or not the companion extension is loaded.
+  property real lastTitleAlarm: 0
+  function blockedSite(title) {
+    var parts = String(title || "").split(/ [-–—] /)
+    var head = (parts.length > 1 ? parts.slice(0, -1).join(" - ") : parts[0]).trim().toLowerCase()
+    if (!head || /\s/.test(head)) return ""
+    var host = head.replace(/^https?:\/\//, "").split("/")[0].replace(/^www\./, "")
+    var sites = state.settings.sites || []
+    for (var i = 0; i < sites.length; i++) if (host === sites[i] || host.endsWith("." + sites[i])) return sites[i]
+    return ""
+  }
+  function watchTitle(title) {
+    if (!ready || !state.locked || screenLocked || view || Date.now() - lastTitleAlarm < 4000) return
+    var site = blockedSite(title)
+    if (!site) return
+    lastTitleAlarm = Date.now()
+    send({op: "blocked", name: site})
+    alarm(site)
+  }
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (["openwindow", "movewindow", "movewindowv2", "pin"].indexOf(String(event.name)) >= 0 && root.ready && root.state.locked) root.send({op: "window"})
+      var name = String(event.name), data = String(event.data || "")
+      if (["openwindow", "movewindow", "movewindowv2", "pin"].indexOf(name) >= 0 && root.ready && root.state.locked) root.send({op: "window"})
+      // activewindow carries "class,title"; windowtitlev2 carries "address,title".
+      if (name === "activewindow" || name === "windowtitlev2") root.watchTitle(data.slice(data.indexOf(",") + 1))
     }
   }
 
