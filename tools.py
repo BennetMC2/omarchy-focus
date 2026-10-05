@@ -14,7 +14,7 @@ ID = {'type': 'string', 'description': 'Task id from focus_state, e.g. 3f9a1c2b7
 STRINGS = {'type': 'array', 'items': {'type': 'string'}}
 
 TOOLS = [
-    tool('add_tasks', 'Add tasks to today\'s list. Each is one short line in the user\'s words, with a check saying what will show it is done.',
+    tool('add_tasks', 'Add tasks to today\'s list. Each is one short line in the user\'s words, with an optional check saying what will show it is done. In quick capture, leave unclear checks empty instead of questioning the user.',
          {'tasks': {'type': 'array', 'items': {'type': 'object', 'properties': {'text': {'type': 'string'}, 'check': {'type': 'string'}}, 'required': ['text']}}}, ['tasks']),
     tool('update_task', 'Reword a task, change its check, make it the main task, or agree it passes on their word (on_word, before the day starts only). After the day has started, rewording or changing the main task takes effect after a cooling-off.',
          {'id': ID, 'text': {'type': 'string'}, 'check': {'type': 'string'}, 'main': {'type': 'boolean'}, 'on_word': {'type': 'boolean'}}, ['id']),
@@ -78,7 +78,7 @@ class Tools:
         tasks = a.get('tasks')
         if not isinstance(tasks, list) or not 1 <= len(tasks) <= 30: raise ValueError('Give 1 to 30 tasks.')
         before = {t['id'] for t in self.day()['tasks']}
-        for t in tasks: self.apply('add', text=t.get('text'), check=t.get('check') or '')
+        self.apply('plan-accept', tasks=tasks)
         return 'Added: ' + '; '.join('[%s] %s' % (t['id'], t['text']) for t in self.day()['tasks'] if t['id'] not in before)
 
     def tool_update_task(self, a):
@@ -207,5 +207,6 @@ class Tools:
         return 'Connected: %s. It loads when the browser next starts.' % ', '.join(self.host.connect_browser())
 
     def tool_finish_setup(self, a):
+        self.host.validate_setup()
         self.apply('setup-done')
         return 'Setup complete.'

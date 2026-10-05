@@ -22,7 +22,7 @@ class Refused(ValueError):
 SECRET_NAMES = ('.env', '.env.*', '*.env', '.envrc', '*.pem', '*.key', '*.p12', '*.pfx', '*.kdbx', '*.keystore', '*.jks',
                 'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*', '.netrc', '.npmrc', '.pypirc', '.htpasswd', '.git-credentials',
                 'credentials', 'credentials.*', '*credentials*.json', 'secrets', 'secrets.*', '*.secret', '*secret*.json', '*secret*.y*ml',
-                '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', 'service-account*.json', '*.tfstate', '*.tfvars')
+                '.grok', '.codex', '.claude', '.gemini', 'auth.json', 'oauth_creds.json', '.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', 'service-account*.json', '*.tfstate', '*.tfvars')
 SKIP_DIRS = {'.git', 'node_modules', '.venv', 'venv', '__pycache__', 'target', 'dist', 'build', '.cache', '.next'}
 MAX_TEXT = 60_000
 MAX_FILE = 2_000_000
@@ -50,7 +50,7 @@ def resolve(path, roots, kind=None):
         except OSError: continue
         root = next((r for r in roots if real == r or r in real.parents), None)
         if root is None: continue
-        if is_secret(real.relative_to(root)): raise Refused('That path is on the never-read list (credentials and keys).')
+        if is_secret(real): raise Refused('That path is on the never-read list (credentials and keys).')
         if kind == 'dir' and not real.is_dir(): raise Refused('That is not a folder.')
         if kind == 'file' and not real.is_file(): raise Refused('That is not a file.')
         return real, root
@@ -111,9 +111,9 @@ GIT_ENV = {'PATH': '/usr/bin:/bin', 'HOME': '/tmp', 'GIT_CONFIG_NOSYSTEM': '1', 
 # Command-line configuration outranks the repository's own, so these hold whatever .git/config says.
 GIT_CONFIG = ('safe.directory=*', 'core.fsmonitor=false', 'core.hooksPath=/dev/null', 'core.pager=cat', 'diff.external=', 'core.sshCommand=false',
               'protocol.allow=never', 'credential.helper=', 'core.askPass=', 'gc.auto=0', 'maintenance.auto=false', 'submodule.recurse=false')
-SECRET_PATHSPECS = [':(exclude,glob,icase)**/.env', ':(exclude,glob,icase)**/.env.*', ':(exclude,glob,icase)**/*.pem', ':(exclude,glob,icase)**/*.key',
-                    ':(exclude,glob,icase)**/id_rsa*', ':(exclude,glob,icase)**/id_ed25519*', ':(exclude,glob,icase)**/.netrc', ':(exclude,glob,icase)**/.npmrc',
-                    ':(exclude,glob,icase)**/*credentials*', ':(exclude,glob,icase)**/*secret*', ':(exclude,glob,icase)**/*.tfstate', ':(exclude,glob,icase)**/*.tfvars']
+# Match the same secret names for file views and Git patches, including their descendants.
+SECRET_PATHSPECS = [':(exclude,glob,icase)**/' + pattern + suffix
+                    for pattern in SECRET_NAMES for suffix in ('', '/**')]
 
 def sandbox(root):
     """Read-only view of one approved folder, no network, nothing else of the home directory. Callbacks that slip through can do no harm."""

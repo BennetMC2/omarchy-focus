@@ -1,5 +1,7 @@
 """Local Focus state machine. All mutations are serialized by the service."""
 import copy
+import hashlib
+import json
 import datetime as dt
 import ipaddress
 from pathlib import Path
@@ -10,11 +12,11 @@ import string
 import uuid
 
 DEFAULTS = {'reset': '04:00', 'mode': 'all', 'minutes': 15, 'sites': [], 'apps': [], 'hosts': True,
-            'strictness': 'standard', 'borders': True, 'strip': True, 'sound': False,
+            'strictness': 'standard', 'planning': 'quick', 'borders': True, 'strip': True, 'sound': False,
             # Where the agent runs, and the folders it may read. Only the user changes these, never the agent.
             # provider "auto" follows the agent chosen for Omarchy itself (omarchy default agent).
             'provider': 'auto', 'model': '', 'endpoint': 'http://127.0.0.1:11434', 'roots': []}
-PROVIDERS = ('auto', 'claude', 'codex', 'ollama')
+PROVIDERS = ('auto', 'claude', 'codex', 'grok', 'ollama')
 
 def endpoint(value):
     """A plain http(s) address for a model server: no credentials, no query, nothing surprising."""
@@ -99,7 +101,9 @@ class Model:
         for ident, change in list(d['pending'].items()):
             if now < change['readyAt']: continue
             try: self.apply({'op': 'commit', 'id': ident}, now)
-            except ValueError: d['pending'].pop(ident, None)
+            except ValueError:
+                d = self.tick(now)
+                d['pending'].pop(ident, None)
         challenge = d['challenge']
         if challenge and challenge['readyAt'] is not None and now >= challenge['readyAt']:
             self.apply({'op': 'override'}, now)
@@ -137,6 +141,28 @@ class Model:
                 'streak': streak, 'recovered': self.s['recovered'], 'setup': self.s['setup'], 'now': now}
 
     def apply(self, cmd, now):
+        # Capture retries survive a lost response or service restart. Store the
+        # receipt in the same state write as its tasks, never in a separate file.
+        receipt = cmd.get('requestId') if cmd.get('op') == 'capture' else None
+        signature = hashlib.sha256(json.dumps(cmd, sort_keys=True).encode()).hexdigest() if receipt else ''
+        receipts = self.s.get('captureReceipts', {})
+        if receipt and receipt in receipts:
+            if receipts[receipt] != signature: raise ValueError('This submission id was already used for different text.')
+            return self.snapshot(now)
+        before = copy.deepcopy(self.s)
+        try:
+            result = self._apply(cmd, now)
+            if receipt:
+                if not isinstance(receipt, str) or len(receipt) > 100: raise ValueError('Invalid submission id.')
+                receipts = self.s.setdefault('captureReceipts', {})
+                receipts[receipt] = signature
+                while len(receipts) > 200: receipts.pop(next(iter(receipts)))
+            return result
+        except Exception:
+            self.s.clear(); self.s.update(before)
+            raise
+
+    def _apply(self, cmd, now):
         d = self.tick(now)
         op = cmd.get('op')
         level = self.s['settings']['strictness']
@@ -148,16 +174,25 @@ class Model:
             return t
         def record(kind, **data):
             d['events'].append({'at': now, 'kind': kind, **data})
+        if d['started'] and level == 'lockdown' and op in ('add', 'capture', 'plan-accept'):
+            raise ValueError('Lockdown: the list is fixed once the day starts.')
         if op in ('snapshot', 'window', 'unlock'):
             pass
         elif op == 'add':
             t = task(cmd.get('text'), check=cmd.get('check') or '')
             d['tasks'].append(t)
             record('add', id=t['id'])
-        elif op == 'plan-accept':
-            proposed = cmd.get('tasks')
+        elif op in ('plan-accept', 'capture'):
+            if op == 'capture':
+                text = cmd.get('text')
+                if not isinstance(text, str) or len(text) > 15000: raise ValueError('Add up to 30 tasks, one per line.')
+                proposed = [{'text': line.strip()} for line in text.splitlines() if line.strip()]
+            else: proposed = cmd.get('tasks')
             if not isinstance(proposed, list) or not 1 <= len(proposed) <= 30: raise ValueError('Nothing to add.')
+            if any(not isinstance(p, dict) for p in proposed): raise ValueError('Each task needs text.')
             new = [task(p.get('text'), check=p.get('check') or '') for p in proposed]
+            if op == 'capture' and not d['started'] and not any(t['main'] for t in d['tasks']):
+                new[0]['main'] = True
             # After Start, changing the main task keeps its countdown; a plan cannot skip it.
             if not d['started'] and type(cmd.get('main')) is int and 0 <= cmd['main'] < len(new):
                 for other in d['tasks']: other['main'] = False
@@ -294,13 +329,15 @@ class Model:
                     value = sorted(set(clean(v) for v in value))
                 elif key == 'hosts':
                     if type(value) is not bool: raise ValueError('Hosts setting must be boolean.')
+                elif key == 'planning':
+                    if value not in ('quick', 'guided'): raise ValueError('Choose quick or guided planning.')
                 elif key == 'strictness':
                     if value not in LEVELS: raise ValueError('Choose honor, standard, hard or lockdown.')
                     if d['started'] and LEVELS.index(value) < LEVELS.index(new['strictness']): raise ValueError('You can raise the mode today, but only lower it from tomorrow.')
                 elif key in ('borders', 'strip', 'sound'):
                     if type(value) is not bool: raise ValueError('That setting is on or off.')
                 elif key == 'provider':
-                    if value not in PROVIDERS: raise ValueError('Choose auto, claude, codex or ollama.')
+                    if value not in PROVIDERS: raise ValueError('Choose auto, claude, codex or grok.')
                 elif key == 'model':
                     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9._:/-]{0,100}', value): raise ValueError('A model id is letters, digits and . _ : / - only.')
                 elif key == 'endpoint':

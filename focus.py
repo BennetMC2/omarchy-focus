@@ -156,6 +156,20 @@ def recover():
             runtime.restore({c['address']: c for c in blocking.clients()})
             return result
 
+def uninstall():
+    """Recover first; never leave blocks behind after removing the service."""
+    recover()
+    blocking.browser_disconnect()
+    # Let Omarchy disable and remove its own plugin. A failure stops the cleanup.
+    run(['omarchy', 'plugin', 'remove', 'local.focus', '--yes'], timeout=90)
+    owned = ['/usr/local/bin/focus-root-helper', '/usr/share/polkit-1/actions/local.focus.policy',
+             '/etc/polkit-1/rules.d/49-local.focus.rules']
+    if any(Path(path).exists() for path in owned):
+        run(['pkexec', '/usr/bin/rm', '-f', '--'] + owned, timeout=90)
+    link = Path.home()/'.local/bin/focusctl'
+    if link.is_symlink() and link.resolve() == common.PLUGIN/'focusctl': link.unlink()
+    return 'Focus removed. Restart your browser. Tasks and history are kept in ' + str(common.STATE) + '.'
+
 def say(text):
     """Say one thing to the Focus agent and print its reply."""
     with socket.socket(socket.AF_UNIX) as sock:
@@ -183,7 +197,9 @@ def main():
     for name in ('serve', 'mcp', 'status', 'apps', 'recover', 'effect'): sub.add_parser(name)
     s = sub.add_parser('say', help='say something to the Focus agent'); s.add_argument('text', nargs='+')
     c = sub.add_parser('config', help='show or change where the agent runs and what it may read')
-    c.add_argument('key', nargs='?', choices=['provider', 'model', 'endpoint', 'folder', 'unfolder']); c.add_argument('value', nargs='?', default='')
+    c.add_argument('key', nargs='?', choices=['provider', 'model', 'endpoint', 'folder', 'unfolder', 'planning']); c.add_argument('value', nargs='?', default='')
+    sub.add_parser('doctor', help='check dependencies without changing anything')
+    sub.add_parser('uninstall', help='recover, remove browser integration, plugin and system helper; keep history')
     sub.add_parser('forget', help='delete the conversation and any stored screenshot')
     r = sub.add_parser('rpc'); r.add_argument('payload')
     l = sub.add_parser('list'); l.add_argument('--json', action='store_true')
@@ -191,6 +207,17 @@ def main():
     g = sub.add_parser('grade'); g.add_argument('word')
     h = sub.add_parser('history'); h.add_argument('--days', type=int, default=7); h.add_argument('--json', action='store_true')
     args = p.parse_args()
+    if args.command == 'doctor':
+        import doctor
+        try: settings = rpc({'op': 'snapshot'})['settings']
+        except (OSError, ValueError): settings = Model(read(common.STATE/'state.json') or None).s['settings']
+        checks = doctor.checks(settings)
+        for check in checks:
+            print(('%s %s: %s' % ('OK' if check['ok'] else 'NEEDED' if check['required'] else 'OPTIONAL', check['name'], check['detail'])))
+        if any(c['required'] and not c['ok'] for c in checks): raise SystemExit(1)
+        return
+    if args.command == 'uninstall':
+        print(uninstall()); return
     if args.command == 'serve':
         import daemon; daemon.serve(); return
     if args.command == 'mcp':
@@ -209,7 +236,7 @@ def main():
             rpc({'op': 'settings', 'values': values})
             time.sleep(0.2)
         state = rpc({'op': 'snapshot'})
-        result = {'backend': state['backend'], 'endpoint': state['settings']['endpoint'], 'folders': state['settings']['roots']}
+        result = {'planning': state['settings']['planning'], 'backend': state['backend'], 'endpoint': state['settings']['endpoint'], 'folders': state['settings']['roots']}
     elif args.command == 'forget': rpc({'op': 'forget'}); result = 'Forgotten.'
     elif args.command == 'recover': result = recover()
     elif args.command == 'rpc': result = rpc(json.loads(args.payload))

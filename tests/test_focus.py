@@ -35,6 +35,30 @@ class StateTests(unittest.TestCase):
         for i in range(count): self.call('add',text='Task '+str(i))
         self.ids=[t['id'] for t in self.m.snapshot(self.now)['tasks']]
         self.call('change',id=self.ids[0],action='main'); self.call('start')
+    def test_planning_defaults_migrates_and_persists(self):
+        self.assertEqual(self.m.s['settings']['planning'], 'quick')
+        old=copy.deepcopy(self.m.s); old['settings'].pop('planning')
+        self.assertEqual(Model(old).s['settings']['planning'], 'quick')
+        self.call('settings', values={'planning':'guided'})
+        saved=json.loads(json.dumps(self.m.s))
+        restored=Model(saved)
+        self.assertEqual(restored.s['settings']['planning'], 'guided')
+        self.assertIn('planning style: guided', agent.digest(restored.snapshot(self.now), self.now))
+        before=copy.deepcopy(self.m.s['settings'])
+        for invalid in ('chatty', '', None, [], 1):
+            with self.assertRaises(ValueError): self.call('settings', values={'planning':invalid})
+            self.assertEqual(self.m.s['settings'], before)
+
+    def test_quick_planning_does_not_relax_hard_review(self):
+        self.call('settings', values={'strictness':'hard', 'planning':'guided'})
+        self.start()
+        self.call('settings', values={'planning':'quick'})
+        self.assertEqual(self.m.s['settings']['strictness'], 'hard')
+        self.assertIn('planning style: quick', agent.digest(self.m.snapshot(self.now), self.now))
+        with self.assertRaises(ValueError):
+            self.call('verdict', id=self.ids[0], verdict='pass', note='Done', basis='claim')
+        with self.assertRaises(ValueError): self.call('settings', values={'strictness':'honor'})
+
     def test_start_requires_main(self):
         self.call('add',text='Build')
         with self.assertRaises(ValueError): self.call('start')
@@ -209,6 +233,7 @@ class Host:
     def connect_browser(self): return ['chromium']
     def suggest(self,text): self.suggested=text
     def choose(self,options,multiple): self.choices=(options,multiple)
+    def validate_setup(self): pass
     def install_helper(self): self.installs+=1; return 'Prompt showing.'
 
 class ToolTests(unittest.TestCase):
@@ -667,6 +692,44 @@ class ServiceTests(unittest.TestCase):
             if done(chat): return chat
             time.sleep(.05)
         self.fail('Timed out: '+json.dumps(chat)[:400])
+    def test_planning_commands_work_without_model_and_persist(self):
+        common.rpc({'op':'settings', 'values':{'provider':'ollama', 'endpoint':'http://127.0.0.1:1'}})
+        before=common.rpc({'op':'snapshot'})
+        self.assertIn('Planning: quick', focus.say('/planning'))
+        self.assertIn('Planning: guided', focus.say('/planning guided'))
+        self.assertIn('Planning: guided', focus.say('/config'))
+        self.assertIn('/planning quick|guided', focus.say('/help'))
+        self.assertIn('Choose quick or guided', focus.say('/planning chatty'))
+        after=common.rpc({'op':'snapshot'})
+        self.assertEqual(after['settings']['planning'], 'guided')
+        self.assertEqual(after['tasks'], before['tasks'])
+        self.assertEqual(after['settings']['strictness'], before['settings']['strictness'])
+        saved=json.loads((self.path/'state.json').read_text())
+        self.assertEqual(Model(saved).s['settings']['planning'], 'guided')
+        self.assertIn('Planning: quick', focus.say('/planning quick'))
+
+    def test_capture_ack_and_retry_use_the_same_saved_tasks(self):
+        command={'op':'capture','text':'Send a note\nCall the dentist','requestId':'release-capture'}
+        first=common.request(command)
+        self.assertEqual(first['requestId'],'release-capture')
+        second=common.request(command)
+        self.assertEqual(first['state']['tasks'],second['state']['tasks'])
+        saved=json.loads((self.path/'state.json').read_text())
+        self.assertIn('release-capture',saved['captureReceipts'])
+        with self.assertRaises(ValueError):
+            common.request({'op':'capture','text':'Valid\n'+'x'*501,'requestId':'invalid-batch'})
+        self.assertEqual(len(common.rpc({'op':'snapshot'})['tasks']),2)
+
+    def test_unknown_command_is_short_and_actionable(self):
+        reply=focus.say('/planing')
+        self.assertIn('/planning',reply)
+        self.assertLess(len(reply),100)
+        reply=focus.say('/not-a-command')
+        self.assertIn('Settings',reply)
+        self.assertLess(len(reply),100)
+        self.assertIn('Agent:',focus.say('/provider'))
+        self.assertIn('Model:',focus.say('/model'))
+
     def test_only_the_user_can_approve_a_folder(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as inside:
             real=str(Path(inside).resolve()); (Path(real)/'notes.md').write_text('evidence here\n')

@@ -66,10 +66,12 @@ Item {
   // First-run setup introduces itself once and then waits to be opened; an unstarted day keeps asking.
   readonly property bool wantsAttention: ready && (!state.setup ? !state.introduced : (!state.started && !state.recovered))
 
+  signal submissionFinished(string id, bool ok, string message)
   function send(command) {
-    if (!link.connected) return
+    if (!link.connected) return false
     link.write(JSON.stringify(command) + "\n")
     link.flush()
+    return true
   }
   function say(text) { send({op: "say", text: text}) }
 
@@ -108,6 +110,7 @@ Item {
     var message
     try { message = JSON.parse(line) } catch (e) { return }
     unanswered = false
+    if (message.requestId) submissionFinished(message.requestId, message.ok !== false, message.error || "")
     if (message.ok === false) {
       error = message.error || "Refused."
       errorClear.restart()

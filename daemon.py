@@ -1,5 +1,6 @@
 """The Focus service: one loop owning the state, the blocking, the agent and every connected client."""
 import copy
+import difflib
 import fcntl
 import json
 import os
@@ -28,10 +29,10 @@ from tools import Tools
 FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time? Pick any below, or type your own."
 # Offered as clickable picks with the first question; anything else can be typed.
 COMMON_SITES = ['youtube.com', 'x.com', 'reddit.com', 'instagram.com', 'facebook.com', 'tiktok.com', 'twitch.tv', 'netflix.com', 'linkedin.com', 'news.ycombinator.com']
-HELP = ('/config shows the agent and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider auto|claude|codex|ollama · '
+HELP = ('/planning quick|guided · /config shows planning style, the agent and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider auto|claude|codex|grok · '
         '/model NAME (/models lists them; for Claude: haiku is the low-cost one) · /endpoint URL · /forget deletes the conversation and any stored screenshot')
 YES, NO = ('y', 'yes', 'allow', 'ok', 'okay', 'sure', 'do it'), ('n', 'no', 'deny', 'cancel', 'not now', 'stop')
-NO_AGENT = "I need Claude Code to work, and I can't find it. Install it with `omarchy default agent claude`, sign in, then open me again."
+NO_AGENT = "Install and sign in to Claude Code, Codex or Grok Build, then choose it in Settings. You can still capture tasks directly."
 EVENTS = {
     'morning': 'A new day. The card just opened for the morning check-in. Greet them in one line and get to what today holds.',
 }
@@ -58,7 +59,7 @@ class Chat:
     def save(self): write(common.STATE/'chat.json', {'day': self.day, 'greeted': self.greeted, 'messages': self.messages, 'choices': self.choices})
 
     def public(self):
-        return {'messages': self.messages[-12:], 'streaming': self.streaming, 'activity': self.activity,
+        return {'messages': self.messages, 'streaming': self.streaming, 'activity': self.activity,
                 'suggestion': self.suggestion, 'choices': self.choices, 'consent': self.consent, 'busy': self.busy}
 
 class Daemon:
@@ -83,6 +84,7 @@ class Daemon:
         self.auth = False
         self.visible = False
         self.saved = self.sent_state = self.sent_chat = ''
+        self.submissions = {}
         self.chat_at = 0
         self.running = True
 
@@ -197,6 +199,7 @@ class Daemon:
         kind = self.info()['provider']
         try:
             if kind == 'claude': return 'Claude models: haiku (lowest cost, fastest) · sonnet (default) · opus (most capable). Set one with /model NAME.'
+            if kind == 'grok': return 'Grok uses its CLI default model. Run grok models in a terminal, then /model NAME here.'
             if kind == 'codex':
                 listed = read(Path.home()/'.codex/models_cache.json').get('models') or []
                 rows = ['%s (%s)' % (m['slug'], one_line(m.get('description'), 60).rstrip('.')) for m in listed if isinstance(m, dict) and m.get('slug')]
@@ -217,8 +220,17 @@ class Daemon:
                 target = str(Path(rest[7:].strip()).expanduser())
                 change(roots=[r for r in settings['roots'] if r != target])
             elif rest: change(roots=settings['roots'] + [folder(rest)])
-        elif name == 'provider' and rest: change(provider=rest.lower())
-        elif name == 'model': change(model=rest)
+        elif name == 'provider':
+            if not rest: return 'Agent: %s. Choose in Settings, or /provider claude, codex, grok or auto.' % agent.resolve(settings)
+            change(provider=rest.lower())
+        elif name == 'planning':
+            if rest:
+                change(planning=rest.lower())
+                self.chat.suggestion, self.chat.choices = '', None
+            return 'Planning: %s. Use /planning quick or /planning guided. Completion review rules are unchanged.' % self.model.s['settings']['planning']
+        elif name == 'model':
+            if not rest: return 'Model: %s. Use /models for options, then /model NAME.' % (settings['model'] or 'provider default')
+            change(model=rest)
         elif name == 'endpoint' and rest: change(endpoint=rest)
         elif name == 'forget':
             self.chat.messages, self.chat.choices, self.chat.consent, self.chat.suggestion = [], None, None, ''
@@ -226,11 +238,13 @@ class Daemon:
             self.session.stop()
             self.chat.save()
             return 'Forgotten: the conversation, approved links and any stored screenshot. Tasks and history are kept.'
-        elif name not in ('config', 'help'): return 'Unknown command. ' + HELP
+        elif name not in ('config', 'help'):
+            match = difflib.get_close_matches(name, ('planning','provider','model','models','config','folder','forget','help'), n=1, cutoff=0.6)
+            return ('Unknown command. Did you mean /%s?' % match[0]) if match else 'Unknown command. Open Settings or type /help.'
         if name == 'help': return HELP
         self.reconfigure()
         settings, info = self.model.s['settings'], self.backend.describe(self.model.s['settings'])
-        return 'Model: %s%s%s · Folders I may read: %s' % (info['label'], '' if info['ok'] else ' (' + info['error'] + ')',
+        return 'Planning: %s · Model: %s%s%s · Folders I may read: %s' % (settings['planning'], info['label'], '' if info['ok'] else ' (' + info['error'] + ')',
                                                           ' · ' + info['note'] if info.get('note') else '', ', '.join(settings['roots']) or 'none')
 
     def open_apps(self): return blocking.open_apps()
@@ -240,7 +254,14 @@ class Daemon:
     def choose(self, options, multiple):
         self.chat.choices = {'options': [one_line(o, 40) for o in options][:12], 'multiple': bool(multiple)}
         self.chat.save()
+    def validate_setup(self):
+        import doctor
+        doctor.require_ready(self.model.s['settings'])
+        if not Path(blocking.HELPER).is_file(): raise ValueError('Install the blocking helper before finishing setup.')
+
     def install_helper(self):
+        import doctor
+        doctor.require_ready(self.model.s['settings'])
         if self.auth: raise ValueError('A password prompt is already showing.')
         self.auth = True
         def work():
@@ -334,9 +355,16 @@ class Daemon:
     def handle(self, cmd, client):
         now, op = time.time(), cmd.get('op')
         reply = {'ok': True}
+        receipt = cmd.get('requestId') if op == 'say' else None
+        if receipt and receipt in self.submissions:
+            if self.submissions[receipt] != cmd.get('text'): raise ValueError('Submission id already used.')
+            return {'ok': True, 'state': self.state(), 'chat': self.chat.public()}
         if op == 'ping': return reply
         if op == 'subscribe': client['subscribed'] = True
-        elif op == 'say': self.say(cmd.get('text'))
+        elif op == 'say':
+            if cmd.get('requestId') and not str(cmd.get('text') or '').startswith('/') and agent.available() and not self.info()['ok']:
+                raise ValueError(self.info()['error'] + ' Your text is kept. Open Settings to fix the connection.')
+            self.say(cmd.get('text'))
         elif op == 'opened': self.opened()
         elif op == 'closed': self.visible = False
         elif op == 'blocked': self.blocked(one_line(cmd.get('name'), 80))
@@ -348,6 +376,9 @@ class Daemon:
             if path:
                 self.discard_consent()
                 self.chat.consent = {'kind': 'share', 'value': path, 'text': 'Send this pasted image to be read?', 'preview': path, 'goes': self.info()['label']}
+        elif op == 'doctor':
+            import doctor
+            reply['checks'] = doctor.checks(self.model.s['settings'])
         elif op == 'forget': self.command('/forget')
         elif op == 'tool':
             # A tool call from a session that has since been replaced must not land.
@@ -360,13 +391,18 @@ class Daemon:
                 reply['image'] = {'data': base64.b64encode(Path(self.shot).read_bytes()).decode(), 'mime': 'image/png' if self.shot.endswith('.png') else 'image/jpeg'}
                 self.discard_shot()  # seen once, then gone
             else: reply['text'] = self.tools.call(cmd.get('name'), cmd.get('args'), now)
-        else: self.model.apply(cmd, now)
+        else:
+            if op == 'setup-done': self.validate_setup()
+            self.model.apply(cmd, now)
         if op == 'settings': self.reconfigure()
         self.settle(force=op not in ('snapshot', 'subscribe', 'say', 'opened', 'closed'))
         reply['state'] = self.state()
         if op in ('subscribe', 'say'): reply['chat'] = self.chat.public()
         if op == 'snapshot' and cmd.get('history'):
             reply['state']['history'] = sorted(copy.deepcopy(list(self.model.s['days'].values())), key=lambda d: d['date'], reverse=True)[:max(1, min(365, int(cmd['history'])))]
+        if receipt:
+            self.submissions[receipt] = cmd.get('text')
+            while len(self.submissions) > 200: self.submissions.pop(next(iter(self.submissions)))
         return reply
 
     def settle(self, force=False):
@@ -423,11 +459,16 @@ class Daemon:
         while b'\n' in client['buffer']:
             raw, client['buffer'] = client['buffer'].split(b'\n', 1)
             before = copy.deepcopy(self.model.s)
-            try: reply = self.handle(json.loads(raw), client)
+            command = {}
+            try:
+                command = json.loads(raw)
+                reply = self.handle(command, client)
             except Exception as exc:
                 self.model.s.clear(); self.model.s.update(before)
                 reply = {'ok': False, 'error': str(exc) or 'Refused.'}
-            if reply is not None: self.send(client, reply)
+            if reply is not None:
+                if isinstance(command, dict) and command.get('requestId'): reply['requestId'] = command['requestId']
+                self.send(client, reply)
         self.publish()
 
     def publish(self, chat_only=False):

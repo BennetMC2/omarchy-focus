@@ -78,6 +78,7 @@ def browser_connect():
             index = next((i for i, line in enumerate(lines) if line.startswith('--load-extension=')), None)
             if index is None: lines.append('--load-extension=' + extension)
             else: lines[index] += ',' + extension
+            flags.parent.mkdir(parents=True, exist_ok=True)
             flags.write_text('\n'.join(lines) + '\n')
         hosts.mkdir(parents=True, exist_ok=True)
         (hosts/(NATIVE_HOST + '.json')).write_text(json.dumps({'name': NATIVE_HOST, 'description': 'Local Focus state bridge', 'path': str(common.PLUGIN/'focus.py'),
@@ -85,6 +86,38 @@ def browser_connect():
         done.append(name)
     if not done: raise ValueError('No Chromium or Brave installation found.')
     return done
+
+def browser_disconnect():
+    """Remove just Focus's extension path and native host; preserve other extensions and flags."""
+    extension = str(common.PLUGIN/'browser')
+    changed = []
+    for name, flags_name, hosts_name in BROWSERS:
+        flags = Path.home()/flags_name
+        if flags.exists():
+            original = flags.read_text()
+            lines = []
+            for line in original.splitlines(keepends=True):
+                if line.startswith('--load-extension='):
+                    ending = '\n' if line.endswith('\n') else ''
+                    paths = line.rstrip('\r\n').split('=', 1)[1].split(',')
+                    kept = [path for path in paths if path != extension]
+                    if kept != paths:
+                        if kept: lines.append('--load-extension=' + ','.join(kept) + ending)
+                        continue
+                lines.append(line)
+            updated = ''.join(lines)
+            if updated != original:
+                shutil.copy2(flags, flags.with_name(flags.name + '.before-focus-remove'))
+                flags.write_text(updated)
+                changed.append(str(flags))
+        host = Path.home()/hosts_name/(NATIVE_HOST + '.json')
+        if host.exists():
+            try: config = json.loads(host.read_text())
+            except ValueError: continue
+            if config.get('name') == NATIVE_HOST and config.get('path') == str(common.PLUGIN/'focus.py'):
+                host.unlink()
+                changed.append(str(host))
+    return changed
 
 def screenshot():
     """Capture the focused monitor. Only called after the user agreed, and nothing sees it until they approve the image too."""

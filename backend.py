@@ -9,8 +9,12 @@ from model import loopback
 
 def describe_claude(settings):
     name = settings.get('model') or 'sonnet'
-    return {'provider': 'claude', 'model': name, 'where': 'remote', 'ok': True, 'tools': True, 'vision': True, 'error': '',
+    info = {'provider': 'claude', 'model': name, 'where': 'remote', 'ok': True, 'tools': True, 'vision': True, 'error': '',
             'label': 'Claude (%s), on Anthropic\'s servers' % name}
+    import agent
+    if not agent.binary('claude') and not agent.os.environ.get('FOCUS_AGENT_CMD'):
+        info.update(ok=False, error='Claude Code is not installed. Install it and sign in, or choose another agent in Settings.')
+    return info
 
 def describe_ollama(settings):
     """Ask the server about the model. A local address proves nothing on its own: Ollama also relays cloud models."""
@@ -44,7 +48,10 @@ def describe_agent(kind, settings):
     import agent, shutil
     name = settings.get('model') or 'its default model'
     info = {'provider': kind, 'model': settings.get('model') or '', 'where': 'remote', 'ok': True, 'tools': True, 'vision': True, 'error': '',
-            'label': "Codex (%s), on OpenAI's servers" % name}
+            'label': ("Grok (%s), on xAI's servers" if kind == 'grok' else "Codex (%s), on OpenAI's servers") % name}
+    if kind == 'grok':
+        info['vision'] = False
+        if not (Path.home()/'.grok/auth.json').is_file(): info.update(ok=False, error='Sign in with grok login first.')
     if not agent.binary(kind): info.update(ok=False, error='%s is not installed. Type /provider auto to use the agent Omarchy is set to.' % kind)
     elif not shutil.which('bwrap'): info.update(ok=False, error='%s keeps tools of its own, so Focus only runs it inside a sandbox, and bubblewrap (bwrap) is not installed.' % kind)
     return info

@@ -11,7 +11,7 @@ import sys
 import threading
 
 # Where each agent's provider lives. A destination must be one of these names or a subdomain of one.
-PROVIDER_HOSTS = {'codex': ('openai.com', 'chatgpt.com')}
+PROVIDER_HOSTS = {'codex': ('openai.com', 'chatgpt.com'), 'grok': ('x.ai', 'grok.com')}
 
 def permitted(host, domains):
     host = host.lower().rstrip('.')

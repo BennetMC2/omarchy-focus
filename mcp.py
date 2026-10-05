@@ -17,7 +17,7 @@ def serve():
         if ident is None: continue  # notifications need no answer
         if method == 'initialize':
             result = {'protocolVersion': params.get('protocolVersion', '2024-11-05'), 'capabilities': {'tools': {}},
-                      'serverInfo': {'name': 'focus', 'version': '2.0.0'}}
+                      'serverInfo': {'name': 'focus', 'version': '2.3.0-beta.1'}}
         elif method == 'tools/list': result = {'tools': TOOLS}
         elif method == 'tools/call':
             try:
