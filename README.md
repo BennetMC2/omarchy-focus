@@ -1,221 +1,108 @@
-# Omarchy Focus
+# Bouncer
 
-A plugin for the Omarchy shell that blocks the sites and apps that distract you until you've done what you said you'd do today.
+A to-do list for Omarchy that keeps you focused. Bouncer stands between you and your distracting sites and apps, and nobody gets in until you've done what you said you'd do today.
 
-There's one small card with an agent on it. Tell it your tasks, or use **Add task** to put them straight on the list. It manages the blocklist and checks your work before it lets you back on YouTube.
+In the morning you tell it what you're working on. During the day you tell it what's finished, and it checks for itself before ticking anything off: it reads the code, opens the file, looks at the link. When the list is done, you get YouTube back.
 
-Your tasks, history and settings are stored on your machine. Focus uses Claude, OpenAI through Codex, Grok through Grok Build, or whichever provider you pick in OpenCode. What you type, plus any files or screenshots you let it see, goes to the provider you've chosen. More in [Privacy](#privacy).
+If this plug-in helps you stay focused and productive, please give it a star and pass it on. https://ko-fi.com/bennetmc
 
-If this plug-in helps you stay focused and productive, please give it a star and pass it on. https://ko-fi.com/bennetmc 
-
-![The Focus card with sample tasks](docs/images/card.png)
-
-## Using it
-
-Open the card from the bar icon, or run `omarchy-shell local.focus toggle`. Enter sends, Shift+Enter adds a line, Esc closes. **Start day** starts the day; an empty Enter doesn't.
-
-- **First run:** it asks what usually distracts you and sets up system-wide blocking. You'll get a password prompt. Blocking starts when setup finishes.
-- **Morning:** say something like "emails, call mum, ship the importer". Quick capture adds the tasks without follow-up questions. It keeps your main task, or picks the first if none is set. Press **Start day** when you're ready.
-- **Add tasks directly:** choose **Add task**, type one per line, and send. No model call is needed. Before starting, click a task to edit it, use ★ to choose the main task, or × to remove a mistake.
-- **During the day:** "done with the importer, it's in ~/Projects/importer". It asks permission to read the folder, checks the code and passes or fails it with a one-line note. Where your mode allows it, things it can't inspect can pass "on your word".
-- **Changes:** "block reddit too", "drop the dentist one", "let me on youtube". Just ask. Once the day has started, the rules below apply.
-- **Settings:** choose the agent, planning style and mode. See the full blocklist and approved folders there. **History** shows the recent conversation.
-- **From a terminal or another agent:** `focusctl say "..."`
-
-Quick capture is the default. If you want help turning a vague list into a plan, choose **Guided** in Settings or type `/planning guided`. `/planning quick` switches back. Planning style doesn't change how strictly your work is reviewed.
-
-## Modes
-
-Tell it "go hard today" or use Settings. You can move up a mode at any time, but you can only move down before the day starts.
-
-| Mode | What counts as proof | Rules |
-|---|---|---|
-| honor | Your word, in one line. | Emergency unlock any time. |
-| standard | It checks what it can. For everything else, you tell it exactly what you did. | 30-second wait on task changes. |
-| hard | Evidence for everything: files, a screenshot where supported, a link, or a timer. | One emergency unlock a day. 2-minute wait on task changes. |
-| lockdown | Same as hard, and the main task has to pass first. | No emergency unlock. The list is fixed once the day starts. |
-
-An emergency unlock means typing a 32-character code and waiting a minute. That gets you 15 minutes and records the override. Blocks can't be loosened after starting the day.
-
-Before starting, you can agree that a task passes on your word, except in lockdown. Time-based tasks like "read for 30 minutes" can use a timer on the card.
-
-Focus is an accountability tool. You own the machine and can remove it. It isn't a tamper-proof parental control.
-
-## How it looks
-
-- Opening something blocked triggers a full-screen takeover: rain in your theme's colours, ACCESS DENIED, a short nudge, then the card.
-- Passing your last task plays ACCESS GRANTED. Each new day opens with a short briefing.
-- While you're locked, window borders turn your theme's red and a thin strip under the bar shows your main task.
-- Sound is off by default. To change borders, the strip or sound, just ask: "turn the strip off".
-- Completed tasks fold away. Your input stays visible while you scroll the list.
-
-Preview the effects without touching your state:
-
-```sh
-omarchy-shell local.focus preview denied    # also: granted, morning, strip, honor, hard, lockdown
-```
+![The Bouncer card with sample tasks](docs/images/card.png)
 
 ## Install
 
-You need Omarchy 4 with the Quickshell plugin system, Python 3.11+, and one supported agent already signed in:
-
-- Claude Code
-- Codex
-- Grok Build
-- OpenCode, signed in to a provider (its free models refuse headless use)
-
-Focus follows `omarchy default agent` when that agent is supported. You can choose another in Settings.
-
-Codex, Grok, OpenCode and Git evidence need `bubblewrap` (`bwrap`). Screenshots need `grim`; clipboard images need `wl-paste`. The companion browser extension supports Chromium and Brave. Other browsers may get hosts-based blocking, but don't get the custom blocked page.
+You'll need Omarchy 4, Python 3.11 or newer, and a coding agent you're already signed in to. Claude Code, Codex, Grok Build and OpenCode all work.
 
 ```sh
 omarchy plugin add https://github.com/BennetMC2/omarchy-focus --enable
 ln -sf ~/.config/omarchy/plugins/local.focus/focusctl ~/.local/bin/focusctl
-focusctl doctor
 omarchy restart shell
 ```
 
-`omarchy plugin add` shows you what it's going to clone and asks before enabling it. `focusctl doctor` checks dependencies without changing anything. A stored login isn't proof that the account can make a request; send a message to confirm that.
+Then click the Bouncer icon in the bar. It asks which sites and apps waste your time and sets everything up from there. You'll get one password prompt, which installs a small helper so the blocks hold in every browser, and it adds its own extension to Chromium and Brave. Restart your browser when it's finished.
 
-Click the Focus icon in the bar. It walks you through setup, including the password prompt. Restart your browser after the extension is added.
+If something isn't working, run `focusctl doctor` and it will tell you what's missing. (The command is still called `focusctl`, from when this was Omarchy Focus.) Codex, Grok and OpenCode need `bubblewrap` installed, and so does checking Git repos. Screenshots use `grim`, and pasting an image uses `wl-paste`.
 
-## Updating
+## A day with it
 
-Focus looks for a newer version about four times a day by fetching from the repository it was installed from. When there is one, the card says so. Nothing installs until you choose **Update** on the card, type `/update`, or run:
+Open the card from the bar icon. Enter sends, Shift+Enter gives you a new line, Esc closes it.
 
-```sh
-focusctl update            # --check only reports
-```
+Start by telling it your day, something like "emails, call mum, ship the importer". If you'd rather skip the chat, hit **Add task** and type one task per line. Press **Start day** once the list looks right.
 
-The install is `omarchy plugin update local.focus`: fast-forward only, validated, and rolled back if the new copy isn't a valid plugin. Focus then restarts the shell so the new Python and QML load. Tasks and history are kept. A copy with local edits won't fast-forward; Focus reports that instead of overwriting them.
+When something's finished, say so: "done with the importer, it's in ~/Projects/importer". It will ask before reading that folder, have a look, and pass or fail the task with a one-line note. For things it can't see, like a phone call, it asks what happened.
 
-If a version ships a new root helper, the card offers **Refresh**, which asks for your password once. Until then the installed helper keeps working.
+You can change things by asking. "Block reddit too", "drop the dentist one" and "go hard today" all do what you'd expect. From a terminal, or from another agent, `focusctl say "..."` does the same job.
 
-To stop the check, turn off **Check automatically** in Settings or type `/update off`. The check contacts the Git host (GitHub by default) and sends nothing about your tasks.
+If you open something that's blocked, you get a full-screen ACCESS DENIED and then the card. While you're locked, your window borders go red and a thin strip under the bar shows your main task. Both can be turned off; just ask.
 
-## Privacy
+## How strict it is
 
-**Stored locally:** tasks, verdicts, history, settings and the blocklist, in `~/.local/state/local.focus/`.
+There are four modes. You can go stricter at any point in the day, but you can only ease off before the day starts.
 
-**Sent to the model:** the conversation context, your task list, and anything you let the agent look at: files, Git views, links and screenshots. That goes to Anthropic for Claude, OpenAI for Codex, xAI for Grok, or the provider of the model you chose for OpenCode. Focus identifies the provider before your first message.
+| Mode | What it takes to pass a task | What else changes |
+|---|---|---|
+| honor | Your word, in a line. | Emergency unlock whenever you like. |
+| standard | It checks what it can see. For the rest, you tell it exactly what you did. | Changing a task takes 30 seconds to land. |
+| hard | Proof for everything: files, a screenshot, a link or a timer. | One emergency unlock a day. Task changes take two minutes. |
+| lockdown | The same as hard, and your main task has to pass first. | No emergency unlock, and the list is fixed once you start. |
 
-**What the agent can access:** Focus supplies tools for task management and approved evidence. Claude's built-in tools are disabled. Codex, Grok and OpenCode also run inside a filesystem and network sandbox; their configuration is described below.
+An emergency unlock makes you type a 32-character code and wait a minute. You get 15 minutes, and it goes on the record. Once the day has started you can add blocks but not remove them.
 
-- **Files and Git:** only in folders you approve. Secrets such as `.env`, `*.pem`, `id_rsa`, agent sign-in folders and `.git/config` stay off-limits even inside an approved folder. These checks reduce exposure; they cannot recognise every secret in an otherwise ordinary file. Git runs read-only in a sandbox with no network.
-- **Links:** only the exact URL you approve, only on the public internet, with redirects kept to the same site.
-- **Screenshots:** you approve the capture, see the image, then approve sending it. Focus deletes its saved image after handing it to the agent once. Pasted images also need approval before sending. Grok and OpenCode screenshot review is not enabled in this beta.
-
-Only you can approve access. The agent can ask, but it has no tool to give itself a folder, link, provider or model.
-
-`/forget` (or `focusctl forget`) deletes Focus's conversation, approved links and any saved screenshot. The conversation also resets each day. This doesn't delete data already sent to a provider. Provider retention and account terms still apply.
+To be clear about what this is: it's there to keep you honest with yourself. It's your machine and you can always remove it, so it's no good as a parental control.
 
 ## Which agent it uses
 
-Focus has no login of its own. It runs a coding agent you already have.
+Bouncer doesn't have its own account. It borrows a coding agent you already use, switches off that agent's own tools, and gives it Bouncer's instead. It follows whichever agent Omarchy is set to, and you can pick a different one in Settings or with `/provider`.
 
-| Agent | How it runs | Evidence |
-|---|---|---|
-| Claude Code | A long-running session with its built-in tools turned off. | Files, Git, links and approved screenshots |
-| Codex (OpenAI) | A new sandboxed process for each reply. | Files, Git, links and approved screenshots |
-| Grok Build | A new sandboxed process for each reply, with an isolated profile. | Files, Git and links; screenshots are deferred |
-| OpenCode | A new sandboxed process for each reply, with an isolated profile. | Files, Git and links; screenshots are deferred |
+- **Claude Code** works out of the box. `/model haiku` is cheaper and quick enough.
+- **Codex** and **Grok Build** both work. Grok can't look at screenshots yet.
+- **OpenCode** needs you to pick a model first. Type `/models` to see them, then something like `/model openai/gpt-5.6-luna`. I've only run it against OpenAI so far. Anthropic, Google, xAI, OpenRouter and OpenCode's own models are wired up but untested. It can't look at screenshots yet either.
 
-Reply times depend on the model and provider. The [compatibility notes](docs/compatibility.md) record the local tests rather than promising a fixed speed.
+Codex, Grok and OpenCode run inside a sandbox. In there they can see their own sign-in and Bouncer's tools, and none of your other files. The only place they can connect to is their own provider.
 
-Choose in Settings or type `/provider claude`, `/provider codex`, `/provider grok`, `/provider opencode` or `/provider auto`. Auto follows Omarchy where possible; otherwise Focus names the supported agent it uses instead. An explicit choice never silently switches providers when it fails.
+`/help` in the card lists the rest of the commands. If you want to know exactly what's been tried with each agent, that's in [what's been tested](docs/compatibility.md).
 
-For Codex, Grok and OpenCode:
+## Privacy
 
-- No `bwrap`, no agent.
-- The sandbox exposes the agent runtime, Focus's code and tool socket, and scratch storage.
-- Codex can access its own sign-in directory. Grok receives a private copy of its login, without the user's plugins or hooks. Grok's temporary profile is removed at the end of the turn. OpenCode gets the same treatment: a copy of its sign-in and nothing else, so your OpenCode sessions, plugins and configuration stay out of the sandbox. If OpenCode renews the sign-in during a turn, the renewed copy is written back.
-- There is no direct network access. A local gate allows HTTPS connections only to that provider's configured hosts.
-- Codex receives an approved screenshot as an attachment for that turn.
+Your tasks, history, settings and blocklist never leave your machine. They live in `~/.local/state/local.focus/`.
 
-For a smaller Claude model, choose **haiku** in Settings or type `/model haiku`. Codex runs at low reasoning effort. Grok uses its CLI default unless you select a model.
+The agent is a different story, because it runs on somebody else's servers. Whatever you type goes to that provider, along with your task list and anything you agree to let it look at. That's Anthropic for Claude, OpenAI for Codex, xAI for Grok, and for OpenCode whichever provider your model belongs to.
 
-OpenCode needs a model chosen, because the model's provider decides where the sandbox may connect: `/models` lists what your sign-ins offer, then `/model openai/MODEL`. Focus routes OpenCode to OpenAI, Anthropic, Google, xAI, OpenRouter and OpenCode's own service; other providers are refused rather than given an open route. Only the OpenAI route has been run live. A listed model can still be refused by your plan; the provider's message is shown when that happens.
+It can't look at anything without asking you first:
 
-This beta's supported list is Claude, Codex, Grok and OpenCode.
+- It only reads files and Git history in folders you've approved. Even inside those it won't open `.env` files, keys, agent sign-in folders or `.git/config`. That catches the obvious secrets, but it can't know about a password sitting in an ordinary file.
+- It only opens the exact link you approve.
+- For a screenshot, you approve the capture, see the picture, and then approve sending it. It's deleted after the agent has looked once.
 
-## Choosing the model
+`/forget` wipes the conversation and any saved screenshot from your machine. It can't pull back what a provider has already received.
 
-These commands work even when the model isn't reachable:
+## Updates
 
-```text
-/config                       show planning style, model and approved folders
-/planning quick               capture without planning questions
-/planning guided              help clarify tasks
-/provider grok                choose Grok (or claude, codex, opencode, auto)
-/models                       list models, or show how to find them
-/model haiku                  choose a model for the current provider
-/folder ~/Projects/importer   approve a folder
-/folder remove ~/Projects/importer
-/update                       install a newer Focus (/update check, /update on|off)
-/help
-```
+A few times a day Bouncer checks whether there's a newer version and tells you on the card if there is. It never installs anything by itself. Press **Update**, type `/update`, or run `focusctl update` when you're ready. Your tasks and history carry over.
 
-From the terminal: `focusctl config provider grok`, `focusctl config model MODEL`, or `focusctl config planning quick`.
+If you'd rather it didn't check at all, type `/update off`.
 
-## How it fits together
-
-| File | What it does |
-|---|---|
-| `model.py` | Tasks, verdicts, wait times, unlock rules and streaks. State changes go through here. |
-| `tools.py` | The agent's tools. Thin wrappers over the model and evidence checks. |
-| `evidence.py` | Approved folders, sandboxed Git and approved links. |
-| `backend.py`, `agent.py`, `netgate.py` | Provider details, agent sessions and the network gate. |
-| `daemon.py` | Owns state, blocking, agent sessions and clients over a user-only Unix socket. |
-| `mcp.py` | Passes the agent's tool calls to the service. |
-| `blocking.py` | Parks blocked windows, calls the root helper and connects the browser. |
-| `focus.py`, `doctor.py` | CLI, browser bridge, recovery, uninstall and dependency checks. |
-| `update.py` | Notices a newer published version and hands the install to Omarchy's plugin updater. |
-| `FocusCard.qml`, `Service.qml`, `FocusOverlay.qml`, `Focus.qml` | The card, service connection, takeovers and bar icon. |
-| `setup/focus-root-helper` | Writes Focus's browser policy files and a marked block in `/etc/hosts`. |
-| `browser/extension/` | Companion extension for the blocked page. |
-
-## Uninstall
+## Getting out
 
 ```sh
-focusctl uninstall
+focusctl recover      # removes every block and pauses Bouncer until you start a day again
+focusctl uninstall    # removes the plugin, the helper and the browser extension
 ```
 
-It recovers first, removes Focus's extension path and native-host registrations, removes the plugin through Omarchy, and removes the system helper and its policy files. Other browser flags and extensions are kept. You may get a password prompt. Restart your browser afterward.
+Uninstalling keeps your history in `~/.local/state/local.focus/`, so delete that folder too if you want it gone.
 
-Your tasks and history stay in `~/.local/state/local.focus/`. Browser flag backups are kept too. Uninstall stops if recovery fails, so it doesn't remove the service while leaving its blocks behind.
-
-## Recovery
-
-`focusctl recover` removes every Focus block and keeps blocking off until you explicitly start the day again.
-
-If the service is down:
+If Bouncer itself has fallen over and you're stuck behind a block, this clears the website blocks without it:
 
 ```sh
 pkexec /usr/local/bin/focus-root-helper recover
 ```
 
-That clears system website blocks. Use `focusctl recover` as well to persist recovery mode and restore parked windows.
-
-## Tests
+## Hacking on it
 
 ```sh
 python3 -m unittest discover -s tests
 node --test --test-isolation=none tests/browser.test.cjs
-omarchy plugin validate .
 ```
 
-These tests use temporary state, mock desktop integration and scripted agents. They don't touch your real tasks or system blocking.
+The tests run against temporary state, so they won't touch your real tasks or blocks. To try a real agent end to end with your own login, run `python3 dev/agent_smoke.py claude --output /tmp/smoke.json`. That one does use a little of your quota.
 
-Live provider checks are separate and use your existing login:
-
-```sh
-python3 dev/agent_smoke.py grok --output /tmp/focus-grok.json
-```
-
-That sends synthetic tasks and a synthetic file to the provider. It can use your account quota. It doesn't start desktop blocking.
-
-To render the actual card with sample data:
-
-```sh
-python3 dev/preview.py --output /tmp/focus-card.png
-```
+It's MIT licensed. If you find a security problem, please report it privately through the Security tab on GitHub.

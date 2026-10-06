@@ -1,4 +1,4 @@
-"""The tools the Focus agent uses to run the day. Every change goes through the model's rules.
+"""The tools the Bouncer agent uses to run the day. Every change goes through the model's rules.
 
 These are the agent's only tools: it has no shell, no file access and no network of its own.
 Evidence comes through evidence.py, inside folders and links the user approved.

@@ -61,7 +61,7 @@ Item {
     command.requestId = requestId
     inputError = ""
     sending = true
-    if (!service.send(command)) { sending = false; inputError = "Disconnected. Your text is kept. Try again when Focus reconnects."; return }
+    if (!service.send(command)) { sending = false; inputError = "Disconnected. Your text is kept. Try again when Bouncer reconnects."; return }
     if (sending) ackTimeout.restart()
   }
   Connections {
@@ -88,7 +88,7 @@ Item {
       Layout.fillWidth: true
       ColumnLayout {
         Layout.fillWidth: true; spacing: Style.space(4)
-        Label { text: "Focus"; font.pixelSize: Style.font.heading; font.bold: true }
+        Label { text: "Bouncer"; font.pixelSize: Style.font.heading; font.bold: true }
         Label { text: root.status; color: root.dim; font.pixelSize: Style.font.caption }
       }
       Item { Layout.fillWidth: true }
@@ -120,7 +120,7 @@ Item {
           Layout.fillWidth: true; spacing: Style.space(12)
           RowLayout {
             visible: !!root.release.available || root.release.busy === "installing"; Layout.fillWidth: true
-            Label { text: root.release.busy === "installing" ? "Updating Focus…" : "Focus " + (root.release.version || "update") + " is available."; color: root.dim; font.pixelSize: Style.font.caption; Layout.fillWidth: true }
+            Label { text: root.release.busy === "installing" ? "Updating Bouncer…" : "Bouncer " + (root.release.version || "update") + " is available."; color: root.dim; font.pixelSize: Style.font.caption; Layout.fillWidth: true }
             Action { text: "Update"; enabled: !root.release.busy; opacity: enabled ? 1 : 0.4; tooltipText: "Installs it and restarts the shell"; onClicked: root.service.send({op: "update"}) }
           }
           RowLayout {
@@ -202,7 +202,7 @@ Item {
           }
           Ui.PanelSeparator { Layout.fillWidth: true; foreground: root.foreground }
           RowLayout {
-            Label { text: "FOCUS"; color: root.dim; font.pixelSize: Style.font.caption; Layout.fillWidth: true }
+            Label { text: "BOUNCER"; color: root.dim; font.pixelSize: Style.font.caption; Layout.fillWidth: true }
             Action { text: "History"; onClicked: root.page = "history" }
           }
           Label { Layout.fillWidth: true; text: root.chat.busy && !root.chat.streaming ? (root.chat.activity || "Thinking…") : (root.latest.text.indexOf("Unknown command.") === 0 && root.latest.text.length > 120 ? "Unknown command. Open Settings or type /help." : root.latest.text); color: root.chat.busy ? root.dim : root.foreground }
@@ -216,7 +216,7 @@ Item {
             delegate: ColumnLayout {
               required property var modelData
               Layout.fillWidth: true; spacing: Style.space(3)
-              Label { text: modelData.role === "user" ? "YOU" : "FOCUS"; color: root.dim; font.pixelSize: Style.font.caption }
+              Label { text: modelData.role === "user" ? "YOU" : "BOUNCER"; color: root.dim; font.pixelSize: Style.font.caption }
               Label { text: modelData.text; Layout.fillWidth: true }
             }
           }
@@ -268,7 +268,7 @@ Item {
           Ui.PanelSeparator { Layout.fillWidth: true; foreground: root.foreground }
           Label { text: "BLOCKED SITES & APPS"; color: root.dim; font.pixelSize: Style.font.caption }
           Label { text: (root.snapshot.settings.sites || []).concat(root.snapshot.settings.apps || []).join(" · ") || "Nothing blocked."; Layout.fillWidth: true }
-          Label { text: "Ask Focus to add or remove a block."; color: root.dim; Layout.fillWidth: true; font.pixelSize: Style.font.caption }
+          Label { text: "Ask Bouncer to add or remove a block."; color: root.dim; Layout.fillWidth: true; font.pixelSize: Style.font.caption }
           Label { text: "APPROVED FOLDERS"; color: root.dim; font.pixelSize: Style.font.caption }
           Label { text: (root.snapshot.settings.roots || []).join("\n") || "None. Use /folder PATH to approve one."; Layout.fillWidth: true; color: root.dim }
           Label { text: "Recovery: run focusctl recover in a terminal. This removes blocks and pauses enforcement."; Layout.fillWidth: true; color: root.dim; font.pixelSize: Style.font.caption }
@@ -288,7 +288,7 @@ Item {
             Action { text: "Check now"; enabled: !root.release.busy; opacity: enabled ? 1 : 0.4; onClicked: root.service.send({op: "update-check"}) }
             Action { text: "Check automatically"; selected: root.snapshot.settings.updates !== false; onClicked: root.service.send({op: "settings", values: {updates: root.snapshot.settings.updates === false}}) }
           }
-          Label { text: "Focus only looks for a newer version. Nothing installs until you choose Update."; color: root.dim; Layout.fillWidth: true; font.pixelSize: Style.font.caption }
+          Label { text: "Bouncer only looks for a newer version. Nothing installs until you choose Update."; color: root.dim; Layout.fillWidth: true; font.pixelSize: Style.font.caption }
         }
       }
     }

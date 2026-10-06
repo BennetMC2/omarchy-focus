@@ -2,8 +2,8 @@
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <policyconfig>
   <action id="local.focus.modify">
-    <description>Update Focus website blocking</description>
-    <message>Authentication is required to update Focus blocking</message>
+    <description>Update Bouncer website blocking</description>
+    <message>Authentication is required to update Bouncer blocking</message>
     <defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>auth_admin</allow_active></defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/focus-root-helper</annotate>
   </action>

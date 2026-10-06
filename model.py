@@ -1,4 +1,4 @@
-"""Local Focus state machine. All mutations are serialized by the service."""
+"""Local Bouncer state machine. All mutations are serialized by the service."""
 import copy
 import hashlib
 import json
@@ -72,7 +72,7 @@ class Model:
             try: self.s['settings']['roots'] = [folder(old)]
             except ValueError: pass
         self.s['settings'].pop('agent', None)
-        # An agent Focus no longer drives falls back to following Omarchy's choice.
+        # An agent Bouncer no longer drives falls back to following Omarchy's choice.
         if self.s['settings']['provider'] not in PROVIDERS: self.s['settings'].update(provider='auto', model='')
         # States from before first-run setup existed are already set up.
         self.s.setdefault('setup', True)
@@ -126,7 +126,7 @@ class Model:
         date = dt.date.fromisoformat(day['date'])
         for offset in range(36600):
             candidate = self.s['days'].get((date - dt.timedelta(days=offset)).isoformat())
-            # Verdicts recorded from outside Focus's own reviewer unlock, but never build a streak.
+            # Verdicts recorded from outside Bouncer's own reviewer unlock, but never build a streak.
             passed = candidate and candidate['started'] and candidate['tasks'] and all(t['status'] == 'passed' and t.get('by') != 'external' for t in candidate['tasks']) and any(t['main'] for t in candidate['tasks']) and not candidate['overrides']
             if offset == 0 and not passed:
                 continue

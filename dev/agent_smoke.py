@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live smoke test against an existing login, using only disposable Focus state.
+"""Live smoke test against an existing login, using only disposable Bouncer state.
 
 No daemon, browser changes, notifications, root helper or real tasks are used.
 The model provider receives synthetic prompts and one synthetic evidence file.
@@ -60,7 +60,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='focus-smoke-') as temp:
         root=Path(temp); (root/'evidence').mkdir()
         proof=root/'evidence/release.txt'
-        proof.write_text('Focus now captures tasks without follow-up questions.\nGuided planning remains available on request.\n')
+        proof.write_text('Bouncer now captures tasks without follow-up questions.\nGuided planning remains available on request.\n')
         common.STATE=root; common.SOCKET=root/'control.sock'; common.TOASTS=False
         host=Host(args.provider,args.model,root)
         server=socket.socket(socket.AF_UNIX); server.bind(str(common.SOCKET)); server.listen()

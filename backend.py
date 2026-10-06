@@ -1,4 +1,4 @@
-"""Which model Focus talks to, where it runs, and what it can do. Checked, not assumed."""
+"""Which model Bouncer talks to, where it runs, and what it can do. Checked, not assumed."""
 import json
 from pathlib import Path
 import threading
@@ -39,7 +39,7 @@ def describe_ollama(settings):
                 where='remote' if relayed or not here else 'local')
     info['label'] = ('Ollama (%s), on this machine' % name if info['where'] == 'local' else
                      'Ollama (%s), relayed to a remote server' % name if relayed else 'Ollama (%s) at %s, on another machine' % (name, endpoint))
-    if not info['tools']: info['error'] = '%s cannot call tools, which Focus needs. Pick a model that supports tool calling.' % name
+    if not info['tools']: info['error'] = '%s cannot call tools, which Bouncer needs. Pick a model that supports tool calling.' % name
     else: info['ok'] = True
     return info
 
@@ -48,7 +48,7 @@ OPENCODE_OWNERS = {'openai': "OpenAI's servers", 'anthropic': "Anthropic's serve
                    'openrouter': "OpenRouter, which passes it to the model's provider", 'opencode': "OpenCode's servers"}
 
 def describe_agent(kind, settings):
-    """Codex, Grok or OpenCode: an installed coding agent Focus drives inside a jail, with a gate as its only way out."""
+    """Codex, Grok or OpenCode: an installed coding agent Bouncer drives inside a jail, with a gate as its only way out."""
     import agent, shutil
     name = settings.get('model') or 'its default model'
     info = {'provider': kind, 'model': settings.get('model') or '', 'where': 'remote', 'ok': True, 'tools': True, 'vision': True, 'error': '',
@@ -63,7 +63,7 @@ def describe_agent(kind, settings):
         info['vision'] = False
         if not (Path.home()/'.grok/auth.json').is_file(): info.update(ok=False, error='Sign in with grok login first.')
     if not agent.binary(kind): info.update(ok=False, error='%s is not installed. Type /provider auto to use the agent Omarchy is set to.' % kind)
-    elif not shutil.which('bwrap'): info.update(ok=False, error='%s keeps tools of its own, so Focus only runs it inside a sandbox, and bubblewrap (bwrap) is not installed.' % kind)
+    elif not shutil.which('bwrap'): info.update(ok=False, error='%s keeps tools of its own, so Bouncer only runs it inside a sandbox, and bubblewrap (bwrap) is not installed.' % kind)
     return info
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -86,10 +86,10 @@ class Backend:
         if kind != 'ollama':
             self.key, self.info = key, describe_claude(settings) if kind == 'claude' else describe_agent(kind, settings)
             self.info['auto'] = settings['provider'] == 'auto'
-            # If Omarchy is set to an agent Focus cannot drive, say which one it is using instead and why.
+            # If Omarchy is set to an agent Bouncer cannot drive, say which one it is using instead and why.
             try: preferred = (Path.home()/'.config/omarchy/defaults/agent').read_text().strip()
             except OSError: preferred = ''
-            self.info['note'] = ('Omarchy is set to %s, which Focus cannot drive yet, so it is using %s.' % (preferred, kind)
+            self.info['note'] = ('Omarchy is set to %s, which Bouncer cannot drive yet, so it is using %s.' % (preferred, kind)
                                  if self.info['auto'] and preferred and preferred != kind else '')
             return self.info
         if key != self.key:

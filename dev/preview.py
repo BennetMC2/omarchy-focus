@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the actual card with disposable data; never starts the Focus service."""
+"""Render the actual card with disposable data; never starts the Bouncer service."""
 import argparse, os, shutil, subprocess, tempfile
 from pathlib import Path
 

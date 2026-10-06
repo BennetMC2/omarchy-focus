@@ -13,7 +13,7 @@ function render(state = {}) {
   }
   document.body.hidden = !state.theme?.foreground;
   byId('count').textContent = (state.completed || 0) + '/' + (state.total || 0);
-  byId('status').textContent = state.connected ? (state.locked ? 'Blocked' : 'Unlocked') : 'Focus is offline';
+  byId('status').textContent = state.connected ? (state.locked ? 'Blocked' : 'Unlocked') : 'Bouncer is offline';
   byId('tasks').replaceChildren();
   for (const task of state.tasks || []) {
     if (task.status === 'passed') continue;

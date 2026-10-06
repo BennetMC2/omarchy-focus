@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "local.focus",
-  "name": "Omarchy Focus",
+  "name": "Bouncer: Focus To-Do List",
   "version": "2.3.0-beta.1",
   "author": "Bennet",
-  "description": "Tell it your day. An agent keeps your distractions blocked until the work checks out.",
+  "description": "A to-do list that keeps you focused. Your distracting sites and apps stay blocked until an agent has checked that today's tasks are done.",
   "license": "MIT",
   "kinds": [
     "service",
@@ -20,7 +20,7 @@
     "overlay": "FocusOverlay.qml"
   },
   "barWidget": {
-    "displayName": "Omarchy Focus",
+    "displayName": "Bouncer",
     "description": "Today's progress",
     "category": "Plugin",
     "allowMultiple": false,

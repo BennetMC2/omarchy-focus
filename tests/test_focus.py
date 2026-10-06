@@ -472,7 +472,7 @@ class ConfigTests(unittest.TestCase):
                 self.assertNotIn('GITHUB_TOKEN',local)
 
 class AgentChoiceTests(unittest.TestCase):
-    """Focus uses whichever coding agent the machine already has, and keeps the ones with tools of their own in a jail."""
+    """Bouncer uses whichever coding agent the machine already has, and keeps the ones with tools of their own in a jail."""
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(); self.home=Path(self.tmp.name).resolve()
         self.bin=self.home/'tools'; self.bin.mkdir()
@@ -489,7 +489,7 @@ class AgentChoiceTests(unittest.TestCase):
     def test_auto_follows_the_agent_chosen_for_omarchy(self):
         self.assertEqual(agent.resolve({'provider':'auto'}),'claude')          # nothing chosen: the first one installed
         self.default('codex'); self.assertEqual(agent.resolve({'provider':'auto'}),'codex')
-        self.default('gemini'); self.assertEqual(agent.resolve({'provider':'auto'}),'claude')   # one Focus cannot drive: fall back to one it can
+        self.default('gemini'); self.assertEqual(agent.resolve({'provider':'auto'}),'claude')   # one Bouncer cannot drive: fall back to one it can
         note=backend.Backend().describe({'provider':'auto','model':'','endpoint':'http://127.0.0.1:11434'})['note']
         self.assertIn('gemini',note); self.assertIn('using claude',note)
         self.default('claude'); self.assertEqual(agent.resolve({'provider':'codex'}),'codex')    # an explicit choice wins
@@ -600,7 +600,7 @@ class GateTests(unittest.TestCase):
             finally: gate.close(); upstream.close()
 
 class FakeOllama:
-    """Answers the one question Focus asks an Ollama server: what is this model and what can it do."""
+    """Answers the one question Bouncer asks an Ollama server: what is this model and what can it do."""
     def __init__(self,**shown):
         outer=self; self.shown=shown; self.asked=[]
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -669,7 +669,7 @@ class RoutingTests(unittest.TestCase):
         # The reply came from the chosen server, named the chosen model, and carried the placeholder token rather than any login.
         self.assertTrue(seen); self.assertEqual({(path,auth,model) for path,auth,model in seen},{('/v1/messages','Bearer ollama','local-test-model')})
 
-# Speaks the agent's streaming protocol and drives Focus through the same tool op the real tool server uses.
+# Speaks the agent's streaming protocol and drives Bouncer through the same tool op the real tool server uses.
 FAKE_AGENT="""#!/usr/bin/python3
 import json,os,re,socket,sys,time
 def tool(name,**args):
@@ -901,7 +901,7 @@ class ServiceTests(unittest.TestCase):
             server.stdin.close(); server.wait(timeout=5); server.stdout.close()
 
 class UpdateTests(unittest.TestCase):
-    """Focus notices a newer published version; installing it is always the user's call."""
+    """Bouncer notices a newer published version; installing it is always the user's call."""
     def setUp(self):
         import update
         self.update=update

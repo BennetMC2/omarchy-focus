@@ -1,44 +1,29 @@
-# Public beta checklist
+# Release checklist
 
-## Prepared locally
+What's left before 2.3.0 gets a tag:
 
-- [x] Task-first card, separate Settings and History.
-- [x] Direct task capture, morning edits, explicit Start day.
-- [x] Atomic batches and capture retry receipts.
-- [x] Claude, Codex and Grok session support.
-- [x] Dependency checks and browser uninstall cleanup.
-- [x] Automated regression tests and live provider smoke checks.
-- [x] README, changelog and compatibility notes.
-- [x] CI workflow, sample screenshots and a 14-second UI demo.
-- [x] Gitleaks scan of all reachable Git history and the working tree: no findings.
+- [ ] Try the screenshot flow against a real agent: capture, cancel, preview, send.
+- [ ] Read the release notes once more.
+- [ ] Tag the release.
+- [ ] Marketplace listing approved (submitted 6 October, waiting on a maintainer).
 
-## Before publication
+Already done: tests passing on GitHub, a secret scan of the Git history, live runs with all four agents, a fresh install on a second machine, private vulnerability reporting switched on, and the marketplace submission.
 
-- [x] User approves the card preview.
-- [x] Install the approved candidate locally and test the real card connection.
-- [ ] Exercise screenshot consent with a live supported provider.
-- [x] Fresh-machine install (done by the author, 6 October 2026).
-- [ ] Review the release notes and demo.
-- [x] Run CI on GitHub.
-- [x] Repository is public; marketplace submission filed.
-- [ ] Release tag.
-- [x] Enable GitHub private vulnerability reporting.
+## Checking a fresh install
 
-## Fresh-machine run
+Worth repeating before any big release, on a spare Omarchy install with a throwaway browser profile. Mocked tests don't replace this.
 
-Use a disposable Omarchy installation and a throwaway browser profile.
-
-1. Install from the candidate commit; run `focusctl doctor`.
-2. Verify a missing agent or missing bwrap gives an actionable message.
+1. Install it and run `focusctl doctor`.
+2. Check that a missing agent or a missing `bwrap` gives a message you can act on.
 3. Sign in, finish setup, restart the browser.
-4. Add two tasks; choose the main task; start explicitly.
-5. Block a reserved `.invalid` domain and verify the extension's blocked page.
-6. Use a disposable app window to verify parking and restoration.
-7. Exercise screenshot capture, cancel, preview and share with synthetic content.
-8. Restart the shell; confirm tasks, settings and pending changes survive.
-9. Upgrade from the previous version without losing state.
-10. Recover; check browser policies, hosts entries and parked windows.
-11. Run `focusctl uninstall`; check that other browser extensions and flags remain.
-12. Restart the browser and confirm Focus is gone.
+4. Add two tasks, pick the main one, press Start day.
+5. Block a made-up `.invalid` domain and check the blocked page appears.
+6. Open a spare app window and check it gets parked, then comes back when you unlock.
+7. Run through a screenshot: capture, cancel, preview, send.
+8. Restart the shell and check tasks, settings and pending changes are still there.
+9. Update from the previous version and check nothing is lost.
+10. Run `focusctl recover` and check the browser policies, hosts entries and parked windows are all cleared.
+11. Run `focusctl uninstall` and check your other browser extensions and flags are untouched.
+12. Restart the browser and check Bouncer is gone.
 
-Record Omarchy, Quickshell, browser, Python and agent versions. Don't substitute mocked tests for this run.
+Note down the Omarchy, Quickshell, browser, Python and agent versions you used.

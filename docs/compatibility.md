@@ -1,31 +1,49 @@
-# What has been tested
+# What's been tested
 
-Release candidate: 2.3.0-beta.1. Local checks: 5 October 2026.
+This is version 2.3.0-beta.1, checked on 5 and 6 October 2026. I've tried to be straight here about what has been run for real and what hasn't.
 
-The supported providers for this beta are Claude Code, Codex (OpenAI), Grok Build, and OpenCode. Gemini is deferred. Older experimental Ollama code remains for compatibility, but it is not part of the supported release.
+## Where it's been used
 
-## Live providers
+I use Bouncer on my own machine, and it has been installed from scratch and used on a second one. Both are Omarchy 4. That is the whole sample so far, so if it misbehaves on yours, please open an issue.
 
-Each run used a temporary Focus state directory, synthetic tasks, and a synthetic evidence file. No real tasks or desktop blocks were changed. The test used the actual session adapters, MCP server, task model, and evidence tools.
+My setup, for reference: Omarchy 4.0.4, Quickshell 0.3.1, Python 3.14, Node 26, Claude Code 2.1.286, Codex 0.154.0, Grok Build 1.0.46 and OpenCode 1.18.31.
 
-| Agent | Model | Result | Observed reply times |
+## The agents
+
+Each agent was put through the same four steps with throwaway tasks and a made-up file, well away from my real list: add two tasks without being asked follow-up questions, start the day when told to, read a file and pass the task it proves, and refuse to pass a task on a bare "trust me" in hard mode.
+
+| Agent | Model | How it went | Reply time |
 |---|---|---|---|
-| Claude Code | haiku | Four scenarios passed on the retry | 6–9 seconds |
-| Codex | gpt-reserve | Four scenarios passed | 11–17 seconds |
-| Grok Build 1.0.46 | CLI default (Grok 4.7 in the earlier probe) | Four scenarios passed | 9–31 seconds |
-| OpenCode 1.18.31 (6 October) | openai/gpt-5.6-luna, ChatGPT sign-in | Four scenarios passed | 9–17 seconds |
+| Claude Code | haiku | Passed on the second try | 6–9 seconds |
+| Codex | gpt-reserve | Passed | 11–17 seconds |
+| Grok Build | its default (Grok 4.7 when I looked) | Passed | 9–31 seconds |
+| OpenCode | openai/gpt-5.6-luna on a ChatGPT sign-in | Passed | 9–17 seconds |
 
-The scenarios were: capture two tasks without planning questions; start on request; read a file and pass the completed task; refuse a bare claim in hard mode.
+A few things worth knowing from those runs:
 
-These are smoke tests, not reliability percentages. The first Haiku run misread a one-line, two-sentence file as one sentence. The review instruction now distinguishes line counts from content counts; the retry fixture also put each sentence on its own line. The original Codex default-model run stopped on a provider-capacity error. Selecting gpt-reserve passed the same scenarios.
+- Haiku's first attempt failed because it read a one-line file containing two sentences as one sentence. I changed the instructions so it counts content and not lines, and it passed after that. It also once suggested I could "just describe" a task in hard mode, though it didn't pass it.
+- Codex stopped with a capacity error on its default model. Picking gpt-reserve fixed that.
+- With OpenCode on a ChatGPT sign-in, OpenAI refused gpt-5.4 and gpt-5.4-mini even though OpenCode lists them. Bouncer shows you the provider's message when that happens, so try another model.
+- I asked OpenCode, from inside the sandbox, to list every tool it had. It listed Bouncer's and nothing else.
 
-Haiku also suggested a verbal account as one possible next step in hard mode, although it did not record a pass. Model judgment and wording still need broader testing. Do not treat an agent verdict as a guarantee that work is correct.
+Four steps passing once is not a reliability figure. The agent is a judge with opinions, and it will sometimes be wrong about your work in both directions.
 
-Grok screenshot review is disabled until tested. Its file-based review, login reuse, isolated profile, tool calls, and provider-only network route have been exercised. Claude/Codex screenshot transport has automated coverage; a fresh live screenshot-consent test is still on the release checklist.
+## Not tested yet
 
-OpenCode ran with a ChatGPT sign-in only. That sign-in refused openai/gpt-5.4 and openai/gpt-5.4-mini ("not supported when using Codex with a ChatGPT account") although OpenCode lists them; gpt-5.6-luna passed. Asked to name its tools inside the sandbox, the model listed only Focus's. The gate refused OpenCode's background request to registry.npmjs.org, which did not affect the turn. The Anthropic, Google, xAI, OpenRouter and OpenCode routes are configured but have not been run live, and neither has a sign-in renewal during a turn (covered by an automated test only). OpenCode screenshot review is disabled until tested.
+- **Screenshots with a real agent.** The plumbing has automated tests for Claude and Codex, but I haven't yet done the full capture, preview and send against a live one on this version. Grok and OpenCode have screenshots switched off until I do.
+- **OpenCode with anything but OpenAI.** The routes for Anthropic, Google, xAI, OpenRouter and OpenCode's own models are there, and none of them has carried a real request.
+- **OpenCode renewing its sign-in mid-reply.** Bouncer copies the renewed sign-in back so your own OpenCode login doesn't go stale. That is covered by an automated test only.
+- **Browsers other than Chromium and Brave.** They get the hosts-file block but not the Bouncer blocked page.
 
-Reproduce a live check (uses account quota):
+## Automated tests
+
+There are 94 Python tests and 6 browser-extension tests, and they run on GitHub for every change on Python 3.11 and 3.13. They cover the rules (modes, waits, timers, carry-over, recovery), what the agent is and isn't allowed to read, the sandbox and network setup for each agent, the browser set-up and clean removal, and the updater.
+
+The card itself is rendered off-screen and its send and retry behaviour checked. A secret scan (Gitleaks) of the whole Git history found nothing on 5 October. That is a scan for leaked keys and nothing more.
+
+## Try an agent yourself
+
+These use a little of your own quota and don't touch your real tasks or blocks:
 
 ```sh
 python3 dev/agent_smoke.py claude --model haiku --output /tmp/focus-claude.json
@@ -33,26 +51,3 @@ python3 dev/agent_smoke.py codex --model gpt-reserve --output /tmp/focus-codex.j
 python3 dev/agent_smoke.py grok --output /tmp/focus-grok.json
 python3 dev/agent_smoke.py opencode --model openai/gpt-5.6-luna --output /tmp/focus-opencode.json
 ```
-
-Full local results and runtime versions are in [validation.md](validation.md).
-
-## Automated and UI coverage
-
-- Task state, review rules, cooling-off, timers and recovery.
-- Atomic batches; rejected batches leave existing tasks intact.
-- Capture receipts survive restart and prevent duplicate retries.
-- Provider selection, Grok stream parsing, sandbox configuration and profile cleanup.
-- File/path/credential exclusions, Git callback and write guards, URL boundaries, and consent.
-- Fresh browser configuration, removal, and preservation of unrelated flags and extensions.
-- Six mocked browser-extension tests.
-- Actual QML card rendered offscreen, including a narrow Settings view.
-- Actual card submission handlers checked for disconnected input, refused input, retry identity, multiline capture and acknowledgement.
-- Plugin manifest validation.
-
-CI has been added for Python 3.11/3.13 and Node 24. It has not run on GitHub yet.
-
-## Still needs a separate desktop
-
-A fresh Omarchy installation must exercise the real password prompt, browser restart, blocked navigation, parked-window restoration, upgrade, and full uninstall. Temporary-home tests cover file handling, not that entire desktop lifecycle.
-
-This work did not start a clean VM or change the author's live blocking state to simulate one. There is no claim of multi-machine validation yet.
