@@ -12,6 +12,9 @@ import threading
 
 # Where each agent's provider lives. A destination must be one of these names or a subdomain of one.
 PROVIDER_HOSTS = {'codex': ('openai.com', 'chatgpt.com'), 'grok': ('x.ai', 'grok.com')}
+# OpenCode reaches whichever provider the chosen model belongs to (the part before the slash), and only that one.
+OPENCODE_HOSTS = {'openai': ('openai.com', 'chatgpt.com'), 'anthropic': ('anthropic.com',), 'google': ('googleapis.com',), 'xai': ('x.ai',),
+                  'openrouter': ('openrouter.ai',), 'opencode': ('opencode.ai',)}
 
 def permitted(host, domains):
     host = host.lower().rstrip('.')

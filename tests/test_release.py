@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 import sys
 import tempfile
 import time
@@ -7,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import agent, blocking, common, focus, netgate, evidence
+import agent, backend, blocking, common, focus, netgate, evidence
 import subprocess
 from model import Model
 from tools import Tools
@@ -77,6 +78,70 @@ class BrowserRemovalTests(unittest.TestCase):
         with patch.object(focus,'recover',side_effect=RuntimeError('recovery failed')), patch.object(blocking,'browser_disconnect') as disconnect, patch.object(focus,'run') as run:
             with self.assertRaises(RuntimeError): focus.uninstall()
             disconnect.assert_not_called(); run.assert_not_called()
+
+class OpenCodeTests(unittest.TestCase):
+    def launch(self, root, settings):
+        home=root/'home'; data=home/'.local/share/opencode'; data.mkdir(parents=True, exist_ok=True)
+        (data/'auth.json').write_text('{"openai":{"type":"oauth","refresh":"synthetic-1"}}'); (data/'opencode.db').write_text('PRIVATE_SESSIONS')
+        (home/'.config/opencode').mkdir(parents=True, exist_ok=True); (home/'.config/opencode/opencode.json').write_text('{"plugin":["UNTRUSTED_USER_PLUGIN"]}')
+        session=agent.OpenCodeSession(type('Host',(),{'model':Model()})()); session.token='test-token'
+        self.gates=[]
+        def gate(kind, domains=None): self.gates.append((kind,domains)); return type('Gate',(),{'path':str(root/'gate')})()
+        with patch.object(common,'STATE',root), patch.object(Path,'home',return_value=home), patch.dict(os.environ,{'HOME':str(home)}), patch.object(agent,'binary',return_value='/usr/bin/opencode'), \
+             patch.object(agent,'jail',side_effect=lambda program,private,scratch,network=True: ['bwrap','--unshare-net','PRIVATE=%r' % (private,)]), patch.object(agent,'gate',side_effect=gate):
+            for name in ('XDG_DATA_HOME','XDG_CACHE_HOME'): os.environ.pop(name,None)
+            return session, home, session.launch(settings)
+    def test_launch_isolated_profile_gate_and_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session,home,(command,env,stdin)=self.launch(Path(tmp),{'model':'openai/small-one'})
+            profile=Path(env['XDG_DATA_HOME']).parent
+            self.assertFalse(stdin); self.assertIn('--unshare-net',command); self.assertIn('PRIVATE=[]',command)   # nothing of the real OpenCode folders is mounted
+            self.assertEqual(self.gates,[('opencode-openai',netgate.OPENCODE_HOSTS['openai'])])
+            self.assertEqual(command[command.index('-m')+1],'openai/small-one'); self.assertEqual(command[command.index('--agent')+1],'focus'); self.assertEqual(command[-1],'--')
+            for key in ('XDG_DATA_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_STATE_HOME'): self.assertTrue(env[key].startswith(str(profile)))
+            self.assertEqual(os.listdir(profile/'data/opencode'),['auth.json']); self.assertEqual(os.listdir(profile/'config'),[])
+            self.assertEqual((profile/'data/opencode/auth.json').stat().st_mode & 0o777,0o600)
+            config=json.loads(env['OPENCODE_CONFIG_CONTENT'])
+            self.assertEqual(set(config['tools']),set(agent.OPENCODE_OFF)); self.assertFalse(any(config['tools'].values())); self.assertFalse(any(config['agent']['focus']['tools'].values()))
+            self.assertEqual(config['agent']['focus']['prompt'],agent.PERSONA); self.assertEqual(session.PREFACE,'')
+            self.assertEqual(config['mcp']['focus']['environment']['FOCUS_SESSION'],'test-token'); self.assertEqual(config['share'],'disabled')
+            self.assertFalse({'OPENAI_API_KEY','ANTHROPIC_API_KEY','GITHUB_TOKEN'} & set(env))
+            session.stop(); self.assertFalse(profile.exists())
+            self.assertIn('synthetic-1',(home/'.local/share/opencode/auth.json').read_text())
+    def test_a_renewed_sign_in_goes_back_to_the_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session,home,(command,env,stdin)=self.launch(Path(tmp),{'model':'openai/small-one'})
+            real=home/'.local/share/opencode/auth.json'; copy=Path(env['XDG_DATA_HOME'])/'opencode/auth.json'
+            copy.write_text('{"openai":{"type":"oauth","refresh":"synthetic-2"}}'); session.stop()
+            self.assertIn('synthetic-2',real.read_text()); self.assertEqual(real.stat().st_mode & 0o777,0o600)
+            # Never over a login the user changed meanwhile, and never with something that is not a sign-in file.
+            session,home,(command,env,stdin)=self.launch(Path(tmp),{'model':'openai/small-one'})
+            copy=Path(env['XDG_DATA_HOME'])/'opencode/auth.json'; copy.write_text('{"renewed":true}'); real.write_text('{"user":"signed in again"}'); session.stop()
+            self.assertEqual(real.read_text(),'{"user":"signed in again"}')
+            session,home,(command,env,stdin)=self.launch(Path(tmp),{'model':'openai/small-one'})
+            Path(env['XDG_DATA_HOME'],'opencode/auth.json').write_text('not json'); session.stop()
+            self.assertIn('synthetic-1',real.read_text())
+    def test_model_decides_the_route_and_the_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for settings,word in (({'model':''},'Pick a model'),({'model':'small-one'},'Pick a model'),({'model':'elsewhere/small-one'},'does not know where')):
+                with self.assertRaises(OSError) as refused: self.launch(Path(tmp),settings)
+                self.assertIn(word,str(refused.exception))
+            home=Path(tmp)/'home'
+            with patch.object(Path,'home',return_value=home), patch.dict(os.environ,{'HOME':str(home)}), patch.object(agent,'binary',return_value='/usr/bin/opencode'), patch('shutil.which',return_value='/usr/bin/bwrap'):
+                for name in ('XDG_DATA_HOME','XDG_CACHE_HOME'): os.environ.pop(name,None)
+                info=backend.describe_agent('opencode',{'model':'anthropic/some-model'})
+                self.assertTrue(info['ok']); self.assertEqual(info['label'],"OpenCode (anthropic/some-model), on Anthropic's servers"); self.assertFalse(info['vision'])
+                info=backend.describe_agent('opencode',{'model':''}); self.assertFalse(info['ok']); self.assertIn('Pick a model',info['error'])
+                (home/'.local/share/opencode/auth.json').unlink()
+                info=backend.describe_agent('opencode',{'model':'openai/x'}); self.assertFalse(info['ok']); self.assertIn('opencode auth login',info['error'])
+        self.assertTrue(netgate.permitted('api.anthropic.com',netgate.OPENCODE_HOSTS['anthropic'])); self.assertFalse(netgate.permitted('registry.npmjs.org',netgate.OPENCODE_HOSTS['openai']))
+        self.assertEqual(set(netgate.OPENCODE_HOSTS),set(backend.OPENCODE_OWNERS))
+    def test_events(self):
+        read=agent.read_event
+        self.assertEqual(read('opencode',{'type':'text','part':{'type':'text','text':'Added  both.'}}),('Added both.',None,''))
+        self.assertEqual(read('opencode',{'type':'tool_use','part':{'tool':'focus_read_file','state':{'input':{'path':'/x/notes.md'}}}}),('','reading notes.md',''))
+        self.assertIn('not supported',read('opencode',{'type':'error','error':{'name':'APIError','data':{'message':"Bad Request: The 'm' model is not supported"}}})[2])
+        self.assertEqual(read('opencode',{'type':'step_start','part':{}}),('',None,''))
 
 class GrokTests(unittest.TestCase):
     def test_launch_isolated_profile_and_cleanup(self):

@@ -91,9 +91,20 @@ def environment(settings, token):
     return env
 
 # The coding agents Focus can drive. Each brings its own sign-in; Focus only attaches its tools.
-AGENTS = ('claude', 'codex', 'grok')
+AGENTS = ('claude', 'codex', 'grok', 'opencode')
+
+FOUND = {}
 
 def binary(name='claude'):
+    """The real program for an agent, remembered for half a minute: the lookup can cost a subprocess, and state asks constantly."""
+    key = (name, str(Path.home()), os.environ.get('PATH'))
+    at, found = FOUND.get(key, (0, ''))
+    if time.time() - at > 30:
+        found = locate(name)
+        FOUND[key] = (time.time(), found)
+    return found
+
+def locate(name):
     """The real program for an agent, wherever Omarchy or its own installer put it. Omarchy's install stubs do not count."""
     candidates = [shutil.which(name)] + [str(Path(c).expanduser()) for c in
                   ('~/.local/share/mise/shims/' + name, '~/.local/bin/' + name, '~/.claude/local/claude' if name == 'claude' else '')]
@@ -150,9 +161,20 @@ def jail(program, private, scratch, network=True):
 CODEX_OFF = ('shell_tool', 'unified_exec', 'unified_exec_tty', 'apps', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use',
              'hooks', 'image_generation', 'in_app_browser', 'in_app_local_automation', 'multi_agent', 'plugins', 'plugin_sharing', 'remote_plugin',
              'skill_search', 'skill_mcp_dependency_install', 'sleep_tool', 'goals', 'tool_suggest', 'workspace_dependencies', 'view_image')
+# OpenCode's own tools. Focus's arrive through its MCP host, which stays on.
+OPENCODE_OFF = ('bash', 'edit', 'write', 'read', 'grep', 'glob', 'list', 'patch', 'webfetch', 'websearch', 'task', 'todowrite', 'todoread', 'skill', 'lsp')
 GATES = {}
 
-def gate(kind):
+def opencode_auth(): return Path(os.environ.get('XDG_DATA_HOME') or Path.home()/'.local/share')/'opencode/auth.json'
+
+def opencode_provider(settings):
+    """OpenCode can talk to many providers. The chosen model names one, and that decides where the jail may connect."""
+    provider, _, name = (settings.get('model') or '').partition('/')
+    if not provider or not name: raise ValueError('Pick a model for OpenCode: /models lists them, then /model PROVIDER/NAME.')
+    if provider not in netgate.OPENCODE_HOSTS: raise ValueError('Focus does not know where %s runs, so it will not open a route to it. Supported through OpenCode: %s.' % (provider, ', '.join(netgate.OPENCODE_HOSTS)))
+    return provider
+
+def gate(kind, domains=None):
     """The one way out of the jail for this agent: a checked connection to its own provider."""
     if kind not in GATES:
         # In the per-user runtime folder: private to this user, gone at logout, and short enough for a socket path.
@@ -160,7 +182,7 @@ def gate(kind):
         for stale in runtime.glob('focus-gate-%s-*.sock' % kind):
             # Left behind by a service that was killed: its process is gone.
             if not Path('/proc/' + stale.stem.rsplit('-', 1)[-1]).exists(): stale.unlink(missing_ok=True)
-        GATES[kind] = netgate.Gate(runtime/('focus-gate-%s-%d.sock' % (kind, os.getpid())), netgate.PROVIDER_HOSTS[kind])
+        GATES[kind] = netgate.Gate(runtime/('focus-gate-%s-%d.sock' % (kind, os.getpid())), domains or netgate.PROVIDER_HOSTS[kind])
     return GATES[kind]
 
 def digest(state, now):
@@ -348,6 +370,8 @@ class Session:
 class ExecSession(Session):
     """For agents with no long-running mode (Codex): one jailed process per turn, the conversation carried in the prompt."""
     TURN_LIMIT = 300
+    # Agents that take the instructions as their own system prompt do not need them repeated in the message.
+    PREFACE = PERSONA + '\n\n'
 
     def __init__(self, host, kind):
         super().__init__(host)
@@ -389,7 +413,7 @@ class ExecSession(Session):
         settings = self.host.model.s['settings']
         self.token = secrets.token_hex(12)
         # No memory between turns, so every turn carries the instructions, the day so far and the state.
-        prompt = PERSONA + '\n\n' + ('' if self.forget else self.host.recap()) + self.host.digest() + '\n' + body
+        prompt = self.PREFACE + ('' if self.forget else self.host.recap()) + self.host.digest() + '\n' + body
         try:
             command, env, by_stdin = self.launch(settings)
             self.proc = subprocess.Popen(command if by_stdin else command + [prompt], stdin=subprocess.PIPE if by_stdin else subprocess.DEVNULL,
@@ -482,6 +506,67 @@ class GrokSession(ExecSession):
             self.profile.cleanup()
             self.profile = None
 
+class OpenCodeSession(ExecSession):
+    """One isolated headless turn. Only the sign-in is copied in: not the user's sessions, plugins or configuration."""
+    PREFACE = ''
+
+    def __init__(self, host, kind='opencode'):
+        super().__init__(host, kind)
+        self.profile = None
+        self.signin = None
+
+    def launch(self, settings):
+        program = binary('opencode')
+        if not program: raise OSError('OpenCode is not installed.')
+        try: provider = opencode_provider(settings)
+        except ValueError as exc: raise OSError(str(exc))
+        auth = opencode_auth()
+        if not auth.is_file(): raise OSError('Sign in with opencode auth login first.')
+        scratch = common.STATE/'agent-scratch'
+        scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.profile = tempfile.TemporaryDirectory(prefix='opencode-', dir=scratch)
+        profile = Path(self.profile.name)
+        for name in ('data/opencode', 'config', 'cache/opencode', 'state'): (profile/name).mkdir(parents=True, mode=0o700)
+        copy = profile/'data/opencode/auth.json'
+        shutil.copy2(auth, copy)
+        copy.chmod(0o600)
+        self.signin = (auth, copy, copy.read_bytes())
+        # The model catalogue it already has, so it need not fetch one through a gate that would refuse.
+        catalogue = Path(os.environ.get('XDG_CACHE_HOME') or Path.home()/'.cache')/'opencode/models.json'
+        if catalogue.is_file(): shutil.copy2(catalogue, profile/'cache/opencode/models.json')
+        server = ['/usr/bin/python3', str(common.PLUGIN/'focus.py'), 'mcp']
+        off = {name: False for name in OPENCODE_OFF}
+        config = {'autoupdate': False, 'share': 'disabled', 'tools': off,
+                  'agent': {'focus': {'mode': 'primary', 'description': 'Focus', 'prompt': PERSONA, 'tools': off}},
+                  'mcp': {'focus': {'type': 'local', 'command': server, 'enabled': True,
+                                    'environment': {'FOCUS_STATE_HOME': str(common.STATE), 'FOCUS_SESSION': self.token}}}}
+        env = {key: os.environ[key] for key in ('HOME', 'USER', 'LOGNAME', 'LANG', 'TERM') if key in os.environ}
+        env.update(PATH='/usr/bin:/bin', XDG_DATA_HOME=str(profile/'data'), XDG_CONFIG_HOME=str(profile/'config'), XDG_CACHE_HOME=str(profile/'cache'),
+                   XDG_STATE_HOME=str(profile/'state'), OPENCODE_CONFIG_CONTENT=json.dumps(config), OPENCODE_DISABLE_AUTOUPDATE='1',
+                   OPENCODE_DISABLE_MODELS_FETCH='1', OPENCODE_DISABLE_LSP_DOWNLOAD='1')
+        way_out = gate('opencode-' + provider, netgate.OPENCODE_HOSTS[provider])
+        command = jail(program, [], scratch, network=False) + ['--bind', way_out.path, way_out.path]
+        command += ['/usr/bin/python3', str(common.PLUGIN/'netgate.py'), way_out.path, program, 'run', '--format', 'json', '--pure',
+                    '--agent', 'focus', '-m', settings['model'], '--']
+        return command, env, False
+
+    def stop(self):
+        super().stop()
+        if self.signin:
+            # A sign-in OpenCode renewed during the turn goes back where it came from, or the user's own login would go stale.
+            auth, copy, before = self.signin
+            self.signin = None
+            try:
+                after = copy.read_bytes()
+                if after != before and auth.read_bytes() == before:
+                    json.loads(after)
+                    fresh = auth.with_name(auth.name + '.focus')
+                    fresh.write_bytes(after); fresh.chmod(0o600); fresh.replace(auth)
+            except (OSError, ValueError): pass
+        if self.profile:
+            self.profile.cleanup()
+            self.profile = None
+
 def read_event(kind, e):
     """One line of an agent's event stream as (text said, activity, failure). Anything unrecognised is ignored."""
     if kind == 'grok':
@@ -496,6 +581,13 @@ def read_event(kind, e):
             if e.get('is_error'): return '', None, one_line(e.get('result') or 'Grok reported an error.', 300)
             return one_line(e.get('result'), 2000), None, ''
         if e.get('type') == 'error': return '', None, one_line(e.get('message') or 'Grok reported an error.', 300)
+    if kind == 'opencode':
+        part = e.get('part') or {}
+        if e.get('type') == 'text': return one_line(part.get('text'), 2000), None, ''
+        if e.get('type') == 'tool_use': return '', describe(str(part.get('tool') or '').removeprefix('focus_'), (part.get('state') or {}).get('input')), ''
+        if e.get('type') == 'error':
+            error = e.get('error') or {}
+            return '', None, one_line(((error.get('data') or {}).get('message') or error.get('message') or error.get('name') if isinstance(error, dict) else error) or 'OpenCode reported an error.', 300)
     if kind == 'codex':
         item = e.get('item') or {}
         if e.get('type') == 'item.completed' and item.get('type') == 'agent_message': return one_line(item.get('text'), 2000), None, ''
@@ -506,5 +598,6 @@ def read_event(kind, e):
 def make_session(host):
     kind = resolve(host.model.s['settings'])
     if kind == 'grok' and not os.environ.get('FOCUS_AGENT_CMD'): return GrokSession(host)
+    if kind == 'opencode' and not os.environ.get('FOCUS_AGENT_CMD'): return OpenCodeSession(host)
     if kind == 'codex' and not os.environ.get('FOCUS_AGENT_CMD'): return ExecSession(host, kind)
     return Session(host)

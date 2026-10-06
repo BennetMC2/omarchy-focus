@@ -12,11 +12,11 @@ import string
 import uuid
 
 DEFAULTS = {'reset': '04:00', 'mode': 'all', 'minutes': 15, 'sites': [], 'apps': [], 'hosts': True,
-            'strictness': 'standard', 'planning': 'quick', 'borders': True, 'strip': True, 'sound': False,
+            'strictness': 'standard', 'planning': 'quick', 'borders': True, 'strip': True, 'sound': False, 'updates': True,
             # Where the agent runs, and the folders it may read. Only the user changes these, never the agent.
             # provider "auto" follows the agent chosen for Omarchy itself (omarchy default agent).
             'provider': 'auto', 'model': '', 'endpoint': 'http://127.0.0.1:11434', 'roots': []}
-PROVIDERS = ('auto', 'claude', 'codex', 'grok', 'ollama')
+PROVIDERS = ('auto', 'claude', 'codex', 'grok', 'opencode', 'ollama')
 
 def endpoint(value):
     """A plain http(s) address for a model server: no credentials, no query, nothing surprising."""
@@ -84,6 +84,8 @@ class Model:
 
     def tick(self, now):
         key = self.day_key(now)
+        # A day never comes back: a later reset time or a clock set backwards cannot reopen a finished day.
+        if key < self.s['current']: key = self.s['current']
         if key != self.s['current']:
             previous = self.s['days'].get(self.s['current'], {})
             unfinished = [copy.deepcopy(t) for t in previous.get('tasks', []) if t['status'] != 'passed']
@@ -260,7 +262,7 @@ class Model:
             elif p['action'] == 'main':
                 for other in d['tasks']: other['main'] = other['id'] == t['id']
             else:
-                t.update(text=p['text'], revision=t['revision'] + 1, status='open', verdict=None, note='', check='')
+                t.update(text=p['text'], revision=t['revision'] + 1, status='open', verdict=None, note='')
             record(p['action'], id=t['id'], previous=previous, text=p['text'])
             d['pending'].pop(t['id'], None)
         elif op == 'verdict':
@@ -334,10 +336,10 @@ class Model:
                 elif key == 'strictness':
                     if value not in LEVELS: raise ValueError('Choose honor, standard, hard or lockdown.')
                     if d['started'] and LEVELS.index(value) < LEVELS.index(new['strictness']): raise ValueError('You can raise the mode today, but only lower it from tomorrow.')
-                elif key in ('borders', 'strip', 'sound'):
+                elif key in ('borders', 'strip', 'sound', 'updates'):
                     if type(value) is not bool: raise ValueError('That setting is on or off.')
                 elif key == 'provider':
-                    if value not in PROVIDERS: raise ValueError('Choose auto, claude, codex or grok.')
+                    if value not in PROVIDERS: raise ValueError('Choose auto, claude, codex, grok or opencode.')
                 elif key == 'model':
                     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9._:/-]{0,100}', value): raise ValueError('A model id is letters, digits and . _ : / - only.')
                 elif key == 'endpoint':

@@ -2,7 +2,7 @@
 
 Release candidate: 2.3.0-beta.1. Local checks: 5 October 2026.
 
-The supported providers for this beta are Claude Code, Codex (OpenAI), and Grok Build. Gemini is deferred. Older experimental Ollama code remains for compatibility, but it is not part of the supported release.
+The supported providers for this beta are Claude Code, Codex (OpenAI), Grok Build, and OpenCode. Gemini is deferred. Older experimental Ollama code remains for compatibility, but it is not part of the supported release.
 
 ## Live providers
 
@@ -13,6 +13,7 @@ Each run used a temporary Focus state directory, synthetic tasks, and a syntheti
 | Claude Code | haiku | Four scenarios passed on the retry | 6–9 seconds |
 | Codex | gpt-reserve | Four scenarios passed | 11–17 seconds |
 | Grok Build 1.0.46 | CLI default (Grok 4.7 in the earlier probe) | Four scenarios passed | 9–31 seconds |
+| OpenCode 1.18.31 (6 October) | openai/gpt-5.6-luna, ChatGPT sign-in | Four scenarios passed | 9–17 seconds |
 
 The scenarios were: capture two tasks without planning questions; start on request; read a file and pass the completed task; refuse a bare claim in hard mode.
 
@@ -22,12 +23,15 @@ Haiku also suggested a verbal account as one possible next step in hard mode, al
 
 Grok screenshot review is disabled until tested. Its file-based review, login reuse, isolated profile, tool calls, and provider-only network route have been exercised. Claude/Codex screenshot transport has automated coverage; a fresh live screenshot-consent test is still on the release checklist.
 
+OpenCode ran with a ChatGPT sign-in only. That sign-in refused openai/gpt-5.4 and openai/gpt-5.4-mini ("not supported when using Codex with a ChatGPT account") although OpenCode lists them; gpt-5.6-luna passed. Asked to name its tools inside the sandbox, the model listed only Focus's. The gate refused OpenCode's background request to registry.npmjs.org, which did not affect the turn. The Anthropic, Google, xAI, OpenRouter and OpenCode routes are configured but have not been run live, and neither has a sign-in renewal during a turn (covered by an automated test only). OpenCode screenshot review is disabled until tested.
+
 Reproduce a live check (uses account quota):
 
 ```sh
 python3 dev/agent_smoke.py claude --model haiku --output /tmp/focus-claude.json
 python3 dev/agent_smoke.py codex --model gpt-reserve --output /tmp/focus-codex.json
 python3 dev/agent_smoke.py grok --output /tmp/focus-grok.json
+python3 dev/agent_smoke.py opencode --model openai/gpt-5.6-luna --output /tmp/focus-opencode.json
 ```
 
 Full local results and runtime versions are in [validation.md](validation.md).

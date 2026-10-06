@@ -4,7 +4,7 @@ A plugin for the Omarchy shell that blocks the sites and apps that distract you 
 
 There's one small card with an agent on it. Tell it your tasks, or use **Add task** to put them straight on the list. It manages the blocklist and checks your work before it lets you back on YouTube.
 
-Your tasks, history and settings are stored on your machine. The agent isn't. Focus uses Claude, OpenAI through Codex, or Grok through Grok Build. What you type, plus any files or screenshots you let it see, goes to the provider you've chosen. More in [Privacy](#privacy).
+Your tasks, history and settings are stored on your machine. The agent isn't. Focus uses Claude, OpenAI through Codex, Grok through Grok Build, or whichever provider you pick in OpenCode. What you type, plus any files or screenshots you let it see, goes to the provider you've chosen. More in [Privacy](#privacy).
 
 **Public beta candidate.** This has been tested on the author's machine, with disposable tasks and automated tests. A fresh Omarchy installation still needs a full desktop test. See [what's been tested](docs/compatibility.md).
 
@@ -64,10 +64,11 @@ You need Omarchy 4 with the Quickshell plugin system, Python 3.11+, and one supp
 - Claude Code
 - Codex
 - Grok Build
+- OpenCode, signed in to a provider (its free models refuse headless use)
 
 Focus follows `omarchy default agent` when that agent is supported. You can choose another in Settings.
 
-Codex, Grok and Git evidence need `bubblewrap` (`bwrap`). Screenshots need `grim`; clipboard images need `wl-paste`. The companion browser extension supports Chromium and Brave. Other browsers may get hosts-based blocking, but don't get the custom blocked page.
+Codex, Grok, OpenCode and Git evidence need `bubblewrap` (`bwrap`). Screenshots need `grim`; clipboard images need `wl-paste`. The companion browser extension supports Chromium and Brave. Other browsers may get hosts-based blocking, but don't get the custom blocked page.
 
 ```sh
 omarchy plugin add https://github.com/BennetMC2/omarchy-focus --enable
@@ -80,19 +81,31 @@ omarchy restart shell
 
 Click the Focus icon in the bar. It walks you through setup, including the password prompt. Restart your browser after the extension is added.
 
-Updates include Python code as well as QML. Restart the shell after updating so the service loads the new code. Tasks and history are kept.
+## Updating
+
+Focus looks for a newer version about four times a day by fetching from the repository it was installed from. When there is one, the card says so. Nothing installs until you choose **Update** on the card, type `/update`, or run:
+
+```sh
+focusctl update            # --check only reports
+```
+
+The install is `omarchy plugin update local.focus`: fast-forward only, validated, and rolled back if the new copy isn't a valid plugin. Focus then restarts the shell so the new Python and QML load. Tasks and history are kept. A copy with local edits won't fast-forward; Focus reports that instead of overwriting them.
+
+If a version ships a new root helper, the card offers **Refresh**, which asks for your password once. Until then the installed helper keeps working.
+
+To stop the check, turn off **Check automatically** in Settings or type `/update off`. The check contacts the Git host (GitHub by default) and sends nothing about your tasks.
 
 ## Privacy
 
 **Stored locally:** tasks, verdicts, history, settings and the blocklist, in `~/.local/state/local.focus/`.
 
-**Sent to the model:** the conversation context, your task list, and anything you let the agent look at: files, Git views, links and screenshots. That goes to Anthropic for Claude, OpenAI for Codex, or xAI for Grok. Focus identifies the provider before your first message.
+**Sent to the model:** the conversation context, your task list, and anything you let the agent look at: files, Git views, links and screenshots. That goes to Anthropic for Claude, OpenAI for Codex, xAI for Grok, or the provider of the model you chose for OpenCode. Focus identifies the provider before your first message.
 
-**What the agent can access:** Focus supplies tools for task management and approved evidence. Claude's built-in tools are disabled. Codex and Grok also run inside a filesystem and network sandbox; their configuration is described below.
+**What the agent can access:** Focus supplies tools for task management and approved evidence. Claude's built-in tools are disabled. Codex, Grok and OpenCode also run inside a filesystem and network sandbox; their configuration is described below.
 
 - **Files and Git:** only in folders you approve. Secrets such as `.env`, `*.pem`, `id_rsa`, agent sign-in folders and `.git/config` stay off-limits even inside an approved folder. These checks reduce exposure; they cannot recognise every secret in an otherwise ordinary file. Git runs read-only in a sandbox with no network.
 - **Links:** only the exact URL you approve, only on the public internet, with redirects kept to the same site.
-- **Screenshots:** you approve the capture, see the image, then approve sending it. Focus deletes its saved image after handing it to the agent once. Pasted images also need approval before sending. Grok screenshot review is not enabled in this beta.
+- **Screenshots:** you approve the capture, see the image, then approve sending it. Focus deletes its saved image after handing it to the agent once. Pasted images also need approval before sending. Grok and OpenCode screenshot review is not enabled in this beta.
 
 Only you can approve access. The agent can ask, but it has no tool to give itself a folder, link, provider or model.
 
@@ -107,22 +120,25 @@ Focus has no login of its own. It runs a coding agent you already have.
 | Claude Code | A long-running session with its built-in tools turned off. | Files, Git, links and approved screenshots |
 | Codex (OpenAI) | A new sandboxed process for each reply. | Files, Git, links and approved screenshots |
 | Grok Build | A new sandboxed process for each reply, with an isolated profile. | Files, Git and links; screenshots are deferred |
+| OpenCode | A new sandboxed process for each reply, with an isolated profile. | Files, Git and links; screenshots are deferred |
 
 Reply times depend on the model and provider. The [compatibility notes](docs/compatibility.md) record the local tests rather than promising a fixed speed.
 
-Choose in Settings or type `/provider claude`, `/provider codex`, `/provider grok` or `/provider auto`. Auto follows Omarchy where possible; otherwise Focus names the supported agent it uses instead. An explicit choice never silently switches providers when it fails.
+Choose in Settings or type `/provider claude`, `/provider codex`, `/provider grok`, `/provider opencode` or `/provider auto`. Auto follows Omarchy where possible; otherwise Focus names the supported agent it uses instead. An explicit choice never silently switches providers when it fails.
 
-For Codex and Grok:
+For Codex, Grok and OpenCode:
 
 - No `bwrap`, no agent.
 - The sandbox exposes the agent runtime, Focus's code and tool socket, and scratch storage.
-- Codex can access its own sign-in directory. Grok receives a private copy of its login, without the user's plugins or hooks. Grok's temporary profile is removed at the end of the turn.
+- Codex can access its own sign-in directory. Grok receives a private copy of its login, without the user's plugins or hooks. Grok's temporary profile is removed at the end of the turn. OpenCode gets the same treatment: a copy of its sign-in and nothing else, so your OpenCode sessions, plugins and configuration stay out of the sandbox. If OpenCode renews the sign-in during a turn, the renewed copy is written back.
 - There is no direct network access. A local gate allows HTTPS connections only to that provider's configured hosts.
 - Codex receives an approved screenshot as an attachment for that turn.
 
 For a smaller Claude model, choose **haiku** in Settings or type `/model haiku`. Codex runs at low reasoning effort. Grok uses its CLI default unless you select a model.
 
-Other providers can come later. This beta's supported list is Claude, Codex and Grok.
+OpenCode needs a model chosen, because the model's provider decides where the sandbox may connect: `/models` lists what your sign-ins offer, then `/model openai/MODEL`. Focus routes OpenCode to OpenAI, Anthropic, Google, xAI, OpenRouter and OpenCode's own service; other providers are refused rather than given an open route. Only the OpenAI route has been run live. A listed model can still be refused by your plan; the provider's message is shown when that happens.
+
+This beta's supported list is Claude, Codex, Grok and OpenCode.
 
 ## Choosing the model
 
@@ -132,11 +148,12 @@ These commands work even when the model isn't reachable:
 /config                       show planning style, model and approved folders
 /planning quick               capture without planning questions
 /planning guided              help clarify tasks
-/provider grok                choose Grok (or claude, codex, auto)
+/provider grok                choose Grok (or claude, codex, opencode, auto)
 /models                       list models, or show how to find them
 /model haiku                  choose a model for the current provider
 /folder ~/Projects/importer   approve a folder
 /folder remove ~/Projects/importer
+/update                       install a newer Focus (/update check, /update on|off)
 /help
 ```
 
@@ -154,6 +171,7 @@ From the terminal: `focusctl config provider grok`, `focusctl config model MODEL
 | `mcp.py` | Passes the agent's tool calls to the service. |
 | `blocking.py` | Parks blocked windows, calls the root helper and connects the browser. |
 | `focus.py`, `doctor.py` | CLI, browser bridge, recovery, uninstall and dependency checks. |
+| `update.py` | Notices a newer published version and hands the install to Omarchy's plugin updater. |
 | `FocusCard.qml`, `Service.qml`, `FocusOverlay.qml`, `Focus.qml` | The card, service connection, takeovers and bar icon. |
 | `setup/focus-root-helper` | Writes Focus's browser policy files and a marked block in `/etc/hosts`. |
 | `browser/` | Companion extension for the blocked page. |

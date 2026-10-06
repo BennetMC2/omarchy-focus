@@ -24,6 +24,7 @@ Item {
   readonly property var snapshot: service ? service.state : ({tasks: [], carry: [], settings: {}, pending: {}})
   readonly property var chat: service ? service.chat : ({messages: [], busy: false})
   readonly property var backend: snapshot.backend || ({})
+  readonly property var release: snapshot.update || ({})
   readonly property color foreground: Color.popups.text
   readonly property color dim: Util.alpha(foreground, 0.68)
   readonly property color tone: snapshot.settings.strictness === "lockdown" ? Color.urgent : Color.accent
@@ -117,6 +118,16 @@ Item {
         ColumnLayout {
           visible: root.page === "today"
           Layout.fillWidth: true; spacing: Style.space(12)
+          RowLayout {
+            visible: !!root.release.available || root.release.busy === "installing"; Layout.fillWidth: true
+            Label { text: root.release.busy === "installing" ? "Updating Focus…" : "Focus " + (root.release.version || "update") + " is available."; color: root.dim; font.pixelSize: Style.font.caption; Layout.fillWidth: true }
+            Action { text: "Update"; enabled: !root.release.busy; opacity: enabled ? 1 : 0.4; tooltipText: "Installs it and restarts the shell"; onClicked: root.service.send({op: "update"}) }
+          }
+          RowLayout {
+            visible: !!root.snapshot.helperStale; Layout.fillWidth: true
+            Label { text: "This version has a newer blocking helper."; color: root.dim; font.pixelSize: Style.font.caption; Layout.fillWidth: true }
+            Action { text: "Refresh"; enabled: !root.snapshot.auth; opacity: enabled ? 1 : 0.4; tooltipText: "Asks for your password once"; onClicked: root.service.send({op: "helper-refresh"}) }
+          }
           RowLayout {
             Layout.fillWidth: true
             Label { text: "TODAY"; color: root.dim; font.pixelSize: Style.font.caption; Layout.fillWidth: true }
@@ -217,7 +228,7 @@ Item {
           Flow {
             Layout.fillWidth: true; spacing: Style.space(6)
             Repeater {
-              model: [{id:"auto",label:"Auto"},{id:"claude",label:"Claude"},{id:"codex",label:"OpenAI"},{id:"grok",label:"Grok"}]
+              model: [{id:"auto",label:"Auto"},{id:"claude",label:"Claude"},{id:"codex",label:"OpenAI"},{id:"grok",label:"Grok"},{id:"opencode",label:"OpenCode"}]
               delegate: Action {
                 required property var modelData
                 text: modelData.label; selected: root.snapshot.settings.provider === modelData.id
@@ -261,6 +272,23 @@ Item {
           Label { text: "APPROVED FOLDERS"; color: root.dim; font.pixelSize: Style.font.caption }
           Label { text: (root.snapshot.settings.roots || []).join("\n") || "None. Use /folder PATH to approve one."; Layout.fillWidth: true; color: root.dim }
           Label { text: "Recovery: run focusctl recover in a terminal. This removes blocks and pauses enforcement."; Layout.fillWidth: true; color: root.dim; font.pixelSize: Style.font.caption }
+          Ui.PanelSeparator { Layout.fillWidth: true; foreground: root.foreground }
+          Label { text: "UPDATES"; color: root.dim; font.pixelSize: Style.font.caption }
+          Label {
+            Layout.fillWidth: true; color: root.release.error ? Color.urgent : root.dim
+            text: !root.release.managed ? "Version " + (root.release.current || "unknown") + ". This copy updates by hand."
+                : root.release.busy === "checking" ? "Checking…" : root.release.busy === "installing" ? "Updating…"
+                : root.release.error ? "Could not check: " + root.release.error
+                : root.release.available ? "Version " + (root.release.version || "newer") + " is available. You have " + root.release.current + "."
+                : "Version " + (root.release.current || "unknown") + (root.release.checked ? ", up to date." : ".")
+          }
+          RowLayout {
+            visible: !!root.release.managed
+            Action { visible: !!root.release.available; text: "Update"; selected: true; enabled: !root.release.busy; opacity: enabled ? 1 : 0.4; onClicked: root.service.send({op: "update"}) }
+            Action { text: "Check now"; enabled: !root.release.busy; opacity: enabled ? 1 : 0.4; onClicked: root.service.send({op: "update-check"}) }
+            Action { text: "Check automatically"; selected: root.snapshot.settings.updates !== false; onClicked: root.service.send({op: "settings", values: {updates: root.snapshot.settings.updates === false}}) }
+          }
+          Label { text: "Focus only looks for a newer version. Nothing installs until you choose Update."; color: root.dim; Layout.fillWidth: true; font.pixelSize: Style.font.caption }
         }
       }
     }
