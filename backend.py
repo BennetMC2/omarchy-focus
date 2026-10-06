@@ -43,12 +43,22 @@ def describe_ollama(settings):
     else: info['ok'] = True
     return info
 
+# Who reads the conversation when OpenCode is the agent: the provider of the chosen model.
+OPENCODE_OWNERS = {'openai': "OpenAI's servers", 'anthropic': "Anthropic's servers", 'google': "Google's servers", 'xai': "xAI's servers",
+                   'openrouter': "OpenRouter, which passes it to the model's provider", 'opencode': "OpenCode's servers"}
+
 def describe_agent(kind, settings):
-    """Codex: an installed coding agent Focus drives inside a jail, with a gate as its only way out."""
+    """Codex, Grok or OpenCode: an installed coding agent Focus drives inside a jail, with a gate as its only way out."""
     import agent, shutil
     name = settings.get('model') or 'its default model'
     info = {'provider': kind, 'model': settings.get('model') or '', 'where': 'remote', 'ok': True, 'tools': True, 'vision': True, 'error': '',
             'label': ("Grok (%s), on xAI's servers" if kind == 'grok' else "Codex (%s), on OpenAI's servers") % name}
+    if kind == 'opencode':
+        # Screenshots are not passed through OpenCode yet.
+        info.update(vision=False, label='OpenCode')
+        try: info['label'] = 'OpenCode (%s), on %s' % (name, OPENCODE_OWNERS[agent.opencode_provider(settings)])
+        except ValueError as exc: info.update(ok=False, error=str(exc))
+        if not agent.opencode_auth().is_file(): info.update(ok=False, error='Sign in with opencode auth login first.')
     if kind == 'grok':
         info['vision'] = False
         if not (Path.home()/'.grok/auth.json').is_file(): info.update(ok=False, error='Sign in with grok login first.')

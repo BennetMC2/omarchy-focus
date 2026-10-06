@@ -123,6 +123,19 @@ class StateTests(unittest.TestCase):
         self.call('settings',values={'sites':['youtube.com']}); self.start()
         for values in ({'sites':[]},{'mode':'earn'},{'reset':'23:00'}):
             with self.assertRaises(ValueError): self.call('settings',values=values)
+    def test_reset_time_cannot_reopen_a_finished_day(self):
+        self.start(1); self.call('verdict',id=self.ids[0],verdict='pass',note='Done.'); self.assertFalse(self.m.snapshot(self.now)['locked'])
+        self.now+=86400; today=self.m.snapshot(self.now)['date']
+        s=self.call('settings',values={'reset':'23:59'})   # later than now: the old arithmetic put this back in yesterday
+        self.assertEqual(s['date'],today); self.assertTrue(s['locked']); self.assertFalse(s['started'])
+        # Nor does a clock set backwards.
+        s=self.m.snapshot(self.now-86400); self.assertEqual(s['date'],today); self.assertTrue(s['locked'])
+    def test_rewording_keeps_the_check(self):
+        self.call('add',text='Report',check='report.md exists'); ident=self.m.snapshot(self.now)['tasks'][0]['id']
+        self.call('change',id=ident,action='edit',text='Full report')
+        task=self.m.snapshot(self.now)['tasks'][0]; self.assertEqual((task['text'],task['check']),('Full report','report.md exists'))
+        tools=Tools(self.m,None); tools.call('update_task',{'id':ident,'text':'The full report','check':'report.md has 500 words'},self.now)
+        self.assertEqual(self.m.snapshot(self.now)['tasks'][0]['check'],'report.md has 500 words')
     def test_invalid_inputs(self):
         for values in ({'sites':['youtube.com\n127.0.0.1']},{'reset':'24:00'},{'minutes':True}):
             with self.assertRaises(ValueError): self.call('settings',values=values)
@@ -470,11 +483,15 @@ class AgentChoiceTests(unittest.TestCase):
         note=backend.Backend().describe({'provider':'auto','model':'','endpoint':'http://127.0.0.1:11434'})['note']
         self.assertIn('gemini',note); self.assertIn('using claude',note)
         self.default('claude'); self.assertEqual(agent.resolve({'provider':'codex'}),'codex')    # an explicit choice wins
-        self.assertEqual(Model({'version':3,'settings':{'provider':'opencode','model':'x/y'},'days':{},'current':'','recovered':False}).s['settings']['provider'],'auto')
+        self.assertEqual(Model({'version':3,'settings':{'provider':'gemini','model':'x/y'},'days':{},'current':'','recovered':False}).s['settings']['provider'],'auto')
     def test_an_install_stub_is_not_an_installed_agent(self):
         self.program('codex','#!/bin/bash\nexport MISE_MINIMUM_RELEASE_AGE=0\nmise use -g --quiet "codex" || exit 1\n')
         self.assertEqual(agent.binary('codex'),''); self.default('codex'); self.assertEqual(agent.resolve({'provider':'auto'}),'claude')
         info=backend.describe_agent('codex',{'model':''}); self.assertFalse(info['ok']); self.assertIn('not installed',info['error'])
+    def test_agent_lookup_is_remembered_between_state_pushes(self):
+        with patch.object(agent,'locate',return_value='/x/claude') as locate:
+            for _ in range(5): self.assertEqual(agent.binary('claude'),'/x/claude')
+        self.assertEqual(locate.call_count,1)
     def test_agents_with_their_own_tools_only_run_jailed(self):
         class Stub: model=Model()
         with tempfile.TemporaryDirectory() as state, patch.object(common,'STATE',Path(state)), patch.object(common,'SOCKET',Path(state)/'control.sock'):
@@ -872,5 +889,50 @@ class ServiceTests(unittest.TestCase):
             self.assertTrue(refused['isError']); self.assertIn('main task',refused['content'][0]['text'])
         finally:
             server.stdin.close(); server.wait(timeout=5); server.stdout.close()
+
+class UpdateTests(unittest.TestCase):
+    """Focus notices a newer published version; installing it is always the user's call."""
+    def setUp(self):
+        import update
+        self.update=update
+        self.tmp=tempfile.TemporaryDirectory(); root=Path(self.tmp.name)
+        self.origin, self.copy = root/'origin', root/'local.focus'
+        self.origin.mkdir(); self.git(self.origin,'init','-q','-b','main'); self.publish('1.0.0')
+        self.git(root,'clone','-q',str(self.origin),str(self.copy))
+        self.patch=patch.object(common,'PLUGIN',self.copy); self.patch.start()
+    def tearDown(self): self.patch.stop(); self.tmp.cleanup()
+    def git(self,where,*args): subprocess.run(['git','-C',str(where),'-c','user.name=t','-c','user.email=t@example.invalid','-c','commit.gpgsign=false']+list(args),check=True,capture_output=True)
+    def publish(self,version):
+        (self.origin/'manifest.json').write_text(json.dumps({'version':version})); self.git(self.origin,'add','.'); self.git(self.origin,'commit','-q','-m',version)
+    def test_notices_a_published_version_without_changing_files(self):
+        self.assertEqual(self.update.check(),{'available':False,'version':'','changes':0})
+        self.publish('1.1.0'); self.publish('1.2.0')
+        self.assertEqual(self.update.check(),{'available':True,'version':'1.2.0','changes':2})
+        self.assertEqual(self.update.current(),'1.0.0')   # looking is not installing
+        self.git(self.copy,'merge','-q','--ff-only','FETCH_HEAD'); self.assertFalse(self.update.check()['available'])
+    def test_install_is_handed_to_omarchy_and_never_runs_unasked(self):
+        watcher=self.update.Watcher(); self.assertTrue(watcher.managed); self.assertEqual(watcher.public()['current'],'1.0.0')
+        with patch.object(self.update,'check') as check:
+            watcher.at=0; watcher.poll(time.time(),False)   # switched off
+            with patch.object(common,'TOASTS',False): watcher.poll(time.time(),True)   # a test or scratch run
+            watcher.at=time.time(); watcher.poll(time.time(),True)   # looked recently
+            self.assertFalse(check.called)
+        finished=[]
+        with patch.object(common,'run',return_value='') as run:
+            self.assertTrue(watcher.install(finished.append))
+            for _ in range(100):
+                if finished: break
+                time.sleep(.02)
+        self.assertEqual(finished,['']); self.assertEqual(run.call_args[0][0],['omarchy','plugin','update','local.focus','--yes'])
+    def test_a_copy_that_was_not_installed_from_git_says_so(self):
+        shutil.rmtree(self.copy/'.git')
+        with self.assertRaises(ValueError): self.update.check()
+        self.assertFalse(self.update.Watcher().managed)
+    def test_a_changed_root_helper_is_noticed(self):
+        (self.copy/'setup').mkdir(); (self.copy/'setup/focus-root-helper').write_text('new'); installed=Path(self.tmp.name)/'helper'
+        with patch.object(blocking,'HELPER',str(installed)):
+            self.assertFalse(blocking.helper_stale())   # not installed at all is setup's business, not an update's
+            installed.write_text('old'); self.assertTrue(blocking.helper_stale())
+            installed.write_text('new'); self.assertFalse(blocking.helper_stale())
 
 if __name__=='__main__': unittest.main()

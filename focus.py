@@ -201,6 +201,7 @@ def main():
     sub.add_parser('doctor', help='check dependencies without changing anything')
     sub.add_parser('uninstall', help='recover, remove browser integration, plugin and system helper; keep history')
     sub.add_parser('forget', help='delete the conversation and any stored screenshot')
+    u = sub.add_parser('update', help='install a newer Focus if one has been published'); u.add_argument('--check', action='store_true', help='only say whether there is one')
     r = sub.add_parser('rpc'); r.add_argument('payload')
     l = sub.add_parser('list'); l.add_argument('--json', action='store_true')
     v = sub.add_parser('verdict'); v.add_argument('id'); group = v.add_mutually_exclusive_group(required=True); group.add_argument('--pass', dest='passed', action='store_true'); group.add_argument('--fail', action='store_true'); v.add_argument('--note', required=True); v.add_argument('--revision', type=int)
@@ -215,6 +216,17 @@ def main():
         for check in checks:
             print(('%s %s: %s' % ('OK' if check['ok'] else 'NEEDED' if check['required'] else 'OPTIONAL', check['name'], check['detail'])))
         if any(c['required'] and not c['ok'] for c in checks): raise SystemExit(1)
+        return
+    if args.command == 'update':
+        import update
+        found = update.check()
+        if not found['available']:
+            print('Focus %s is up to date.' % update.current()); return
+        print('Focus %s is available (%d change%s).' % (found['version'] or 'update', found['changes'], '' if found['changes'] == 1 else 's'))
+        if args.check: return
+        update.install()
+        if blocking.helper_stale(): print('The blocking helper changed in this version. Open the card to refresh it.')
+        print('Updated. Restarting the shell to load it.' if update.restart() else 'Updated. Run omarchy restart shell to load it.')
         return
     if args.command == 'uninstall':
         print(uninstall()); return

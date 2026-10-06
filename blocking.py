@@ -20,6 +20,11 @@ BROWSERS = (('chromium', '.config/chromium-flags.conf', '.config/chromium/Native
 
 def clients(): return json.loads(run(['hyprctl','-j','clients']))
 
+def helper_stale():
+    """True when the installed root helper is not the one this version ships. An update cannot replace it without the password."""
+    try: return Path(HELPER).read_bytes() != (common.PLUGIN/'setup/focus-root-helper').read_bytes()
+    except OSError: return False
+
 def dispatch(address, workspace=None, pin=False):
     if not re.fullmatch(r'0x[0-9a-fA-F]+', address): raise ValueError('Invalid window address.')
     selector = json.dumps('address:' + address)

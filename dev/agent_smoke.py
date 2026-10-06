@@ -52,7 +52,7 @@ class Host:
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('provider',choices=('claude','codex','grok'))
+    parser.add_argument('provider',choices=('claude','codex','grok','opencode'))
     parser.add_argument('--model',default='')
     parser.add_argument('--output',required=True)
     args=parser.parse_args()

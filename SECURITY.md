@@ -1,6 +1,6 @@
 # Security
 
-Focus changes browser policies and hosts entries through a narrow root helper. The agent reviews only approved evidence through Focus's tools. Codex and Grok also run in a sandbox.
+Focus changes browser policies and hosts entries through a narrow root helper. The agent reviews only approved evidence through Focus's tools. Codex, Grok and OpenCode also run in a sandbox.
 
 Please report a suspected security issue privately through GitHub's private vulnerability reporting when available. If that channel isn't enabled, open an issue asking for a private contact without posting exploit details or credentials.
 

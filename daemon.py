@@ -17,6 +17,7 @@ import traceback
 import agent
 import blocking
 import common
+import update
 from common import one_line, read, write, toast
 import base64
 from pathlib import Path
@@ -29,10 +30,11 @@ from tools import Tools
 FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time? Pick any below, or type your own."
 # Offered as clickable picks with the first question; anything else can be typed.
 COMMON_SITES = ['youtube.com', 'x.com', 'reddit.com', 'instagram.com', 'facebook.com', 'tiktok.com', 'twitch.tv', 'netflix.com', 'linkedin.com', 'news.ycombinator.com']
-HELP = ('/planning quick|guided · /config shows planning style, the agent and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider auto|claude|codex|grok · '
-        '/model NAME (/models lists them; for Claude: haiku is the low-cost one) · /endpoint URL · /forget deletes the conversation and any stored screenshot')
+HELP = ('/planning quick|guided · /config shows planning style, the agent and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider auto|claude|codex|grok|opencode · '
+        '/model NAME (/models lists them; for Claude: haiku is the low-cost one) · /endpoint URL · /update installs a newer Focus (/update check, /update on|off) · '
+        '/forget deletes the conversation and any stored screenshot')
 YES, NO = ('y', 'yes', 'allow', 'ok', 'okay', 'sure', 'do it'), ('n', 'no', 'deny', 'cancel', 'not now', 'stop')
-NO_AGENT = "Install and sign in to Claude Code, Codex or Grok Build, then choose it in Settings. You can still capture tasks directly."
+NO_AGENT = "Install and sign in to Claude Code, Codex, Grok Build or OpenCode, then choose it in Settings. You can still capture tasks directly."
 EVENTS = {
     'morning': 'A new day. The card just opened for the morning check-in. Greet them in one line and get to what today holds.',
 }
@@ -71,6 +73,9 @@ class Daemon:
         self.capture = False
         self.passed = None
         self.backend = Backend()
+        self.updates = update.Watcher()
+        self.helper_stale = blocking.helper_stale()
+        self.refreshing = False
         self.links = set()
         self.shot = None
         settings = self.model.s['settings']
@@ -200,6 +205,11 @@ class Daemon:
         try:
             if kind == 'claude': return 'Claude models: haiku (lowest cost, fastest) · sonnet (default) · opus (most capable). Set one with /model NAME.'
             if kind == 'grok': return 'Grok uses its CLI default model. Run grok models in a terminal, then /model NAME here.'
+            if kind == 'opencode':
+                # Only models of providers it is signed in to and Focus can route to.
+                signed = set(read(agent.opencode_auth())) & set(agent.netgate.OPENCODE_HOSTS)
+                listed = [m for m in common.run([agent.binary('opencode'), 'models'], timeout=20).split() if m.partition('/')[0] in signed]
+                return 'OpenCode models: ' + (' · '.join(listed[:40]) or 'none; sign in with opencode auth login') + '. Set one with /model PROVIDER/NAME.'
             if kind == 'codex':
                 listed = read(Path.home()/'.codex/models_cache.json').get('models') or []
                 rows = ['%s (%s)' % (m['slug'], one_line(m.get('description'), 60).rstrip('.')) for m in listed if isinstance(m, dict) and m.get('slug')]
@@ -215,13 +225,24 @@ class Daemon:
         now, settings = time.time(), self.model.s['settings']
         change = lambda **values: self.model.apply({'op': 'settings', 'values': values}, now)
         if name == 'models': return self.models()
+        if name == 'update':
+            if rest in ('on', 'off'):
+                change(updates=rest == 'on')
+                return 'Checking for updates is %s. Nothing installs until you say so.' % rest
+            found = self.updates.public()
+            if rest == 'check' or not found['available']:
+                if not found['managed']: return 'This copy was not installed with omarchy plugin add, so it updates by hand.'
+                self.updates.look()
+                return 'Focus %s. Checking for a newer one; it shows on the card if there is.' % found['current']
+            self.start_update()
+            return 'Updating to %s. Focus restarts when it is done.' % (found['version'] or 'the newest version')
         if name == 'folder':
             if rest.startswith('remove '):
                 target = str(Path(rest[7:].strip()).expanduser())
                 change(roots=[r for r in settings['roots'] if r != target])
             elif rest: change(roots=settings['roots'] + [folder(rest)])
         elif name == 'provider':
-            if not rest: return 'Agent: %s. Choose in Settings, or /provider claude, codex, grok or auto.' % agent.resolve(settings)
+            if not rest: return 'Agent: %s. Choose in Settings, or /provider claude, codex, grok, opencode or auto.' % agent.resolve(settings)
             change(provider=rest.lower())
         elif name == 'planning':
             if rest:
@@ -239,7 +260,7 @@ class Daemon:
             self.chat.save()
             return 'Forgotten: the conversation, approved links and any stored screenshot. Tasks and history are kept.'
         elif name not in ('config', 'help'):
-            match = difflib.get_close_matches(name, ('planning','provider','model','models','config','folder','forget','help'), n=1, cutoff=0.6)
+            match = difflib.get_close_matches(name, ('planning','provider','model','models','config','folder','forget','update','help'), n=1, cutoff=0.6)
             return ('Unknown command. Did you mean /%s?' % match[0]) if match else 'Unknown command. Open Settings or type /help.'
         if name == 'help': return HELP
         self.reconfigure()
@@ -270,11 +291,20 @@ class Daemon:
         threading.Thread(target=work, daemon=True).start()
         return 'The password prompt is on screen. Tell them so in a few words and stop; the result arrives as an event.'
 
+    def start_update(self):
+        if not self.updates.install(lambda error: self.done.put(('updated', error))): raise ValueError('Focus is already checking or updating.')
+
+    def refresh_helper(self):
+        """A new version shipped a new root helper: put it in place, with the same single password prompt as setup."""
+        if not self.helper_stale: raise ValueError('The blocking helper is already current.')
+        self.install_helper()
+        self.refreshing = True
+
     # --- state ------------------------------------------------------------------------------------
 
     def state(self):
         return {**self.runtime.enrich(self.model.snapshot(time.time())), 'agent': agent.available(), 'auth': self.auth, 'capture': self.capture,
-                'backend': self.info(),
+                'backend': self.info(), 'update': self.updates.public(), 'helperStale': self.helper_stale,
                 'introduced': self.chat.greeted.startswith('first_run')}
 
     def event(self, text): self.session.send('<event>' + text + '</event>')
@@ -380,6 +410,9 @@ class Daemon:
             import doctor
             reply['checks'] = doctor.checks(self.model.s['settings'])
         elif op == 'forget': self.command('/forget')
+        elif op == 'update': self.start_update()
+        elif op == 'update-check': self.updates.look()
+        elif op == 'helper-refresh': self.refresh_helper()
         elif op == 'tool':
             # A tool call from a session that has since been replaced must not land.
             if cmd.get('session') is not None and cmd.get('session') != self.session.token: raise ValueError('That session has ended.')
@@ -496,8 +529,20 @@ class Daemon:
                 if finished[2]: self.resume('The screenshot could not be taken: ' + finished[2])
                 else: self.chat.consent = {'kind': 'share', 'value': finished[1], 'text': 'Send this screenshot to be read?', 'preview': finished[1], 'goes': self.info()['label']}
                 continue
-            self.auth = False
-            self.event('The system helper install ' + ('failed: ' + finished[1] if finished[1] else 'finished: it is installed.') + ' Carry on with setup.')
+            if finished[0] == 'updated':
+                if finished[1]: self.chat.add('system', 'The update did not install: ' + finished[1])
+                else:
+                    self.chat.add('system', 'Updated. Focus is restarting to load it.')
+                    self.publish()
+                    # Without the shell's own restart, at least the service comes back on the new code.
+                    if not update.restart(): self.running = False
+                continue
+            self.auth, self.helper_stale = False, blocking.helper_stale()
+            if self.refreshing:
+                self.refreshing = False
+                self.chat.add('system', 'The blocking helper could not be refreshed: ' + finished[1] if finished[1] else 'Blocking helper refreshed.')
+            else: self.event('The system helper install ' + ('failed: ' + finished[1] if finished[1] else 'finished: it is installed.') + ' Carry on with setup.')
+        self.updates.poll(now, self.model.s['settings']['updates'])
         self.session.tick(now)
         self.settle()
         self.publish()
