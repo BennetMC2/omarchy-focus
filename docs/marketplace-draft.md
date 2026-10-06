@@ -1,16 +1,15 @@
-# Marketplace submission draft
+# Marketplace submission
+
+Submitted to https://github.com/omacom/omarchy-plugin-marketplace on 6 October 2026. Later versions are published there with the Plugin verification form and the new commit SHA.
 
 Name: Omarchy Focus
 Repository: https://github.com/BennetMC2/omarchy-focus
 Plugin ID: local.focus
 Version: 2.3.0-beta.1
-Suggested category: Productivity
-Suggested tags: focus, tasks, blocking, agent
+Category: Productivity
+Tags: ai, quickshell, hyprland
+Suggested tag: focus
 
-Description:
+Maintainer notes:
 
-Blocks distracting sites and apps until your daily tasks pass review. One small card for the task list and an agent that checks your work. Supports Claude Code, Codex and Grok Build.
-
-Requires Omarchy 4 with Quickshell, Python 3.11+, and an agent already signed in. Codex, Grok and Git evidence require bubblewrap. The browser extension supports Chromium and Brave.
-
-This is a draft, not a submitted listing. Finish the release checklist before submission.
+Needs an already signed-in coding agent (Claude Code, Codex, Grok Build or OpenCode); Codex, Grok, OpenCode and Git evidence need bubblewrap. First-run setup asks before it changes anything outside the plugin: one password prompt installs a small root-owned helper (/usr/local/bin/focus-root-helper) and a polkit rule limited to that helper, which only writes Focus's own browser policy files and one marked block in /etc/hosts. The same step adds the companion extension to the Chromium/Brave flags files, keeping a backup. `focusctl recover` removes all blocking and `focusctl uninstall` removes everything.
