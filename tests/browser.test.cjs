@@ -18,7 +18,7 @@ function harness() {
     alarms: {create: () => {}, onAlarm: event('alarm')}, webNavigation: {onErrorOccurred: event('navigationError')}
   };
   const context = vm.createContext({chrome, URL, console});
-  vm.runInContext(fs.readFileSync(require.resolve('../browser/background.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(require.resolve('../browser/extension/background.js'), 'utf8'), context);
   return {context, events, writes, redirects, sent, rules: () => rules};
 }
 const state = {connected: true, locked: true, total: 2, completed: 0, settings: {sites: ['youtube.com']}};

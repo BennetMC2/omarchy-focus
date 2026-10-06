@@ -75,12 +75,18 @@ class Daemon:
         self.backend = Backend()
         self.updates = update.Watcher()
         self.helper_stale = blocking.helper_stale()
+        self.moved = False
+        # The extension's folder changed in 2.3: follow it, so an updated install keeps its blocked page.
+        if common.TOASTS and blocking.browser_moved():
+            try: blocking.browser_connect(); self.moved = True
+            except (OSError, ValueError): pass
         self.refreshing = False
         self.links = set()
         self.shot = None
         settings = self.model.s['settings']
         self.config = (settings['provider'], settings['model'], settings['endpoint'], tuple(settings['roots']))
         self.chat = Chat()
+        if self.moved: self.chat.add('system', 'This version moved the Focus browser extension. Restart your browser to load it again.')
         self.session = agent.make_session(self)
         self.tools = Tools(self.model, self)
         self.selector = selectors.DefaultSelector()

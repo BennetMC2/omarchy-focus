@@ -174,7 +174,7 @@ From the terminal: `focusctl config provider grok`, `focusctl config model MODEL
 | `update.py` | Notices a newer published version and hands the install to Omarchy's plugin updater. |
 | `FocusCard.qml`, `Service.qml`, `FocusOverlay.qml`, `Focus.qml` | The card, service connection, takeovers and bar icon. |
 | `setup/focus-root-helper` | Writes Focus's browser policy files and a marked block in `/etc/hosts`. |
-| `browser/` | Companion extension for the blocked page. |
+| `browser/extension/` | Companion extension for the blocked page. |
 
 ## Uninstall
 

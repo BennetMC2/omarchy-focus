@@ -55,7 +55,7 @@ class BrowserRemovalTests(unittest.TestCase):
     def test_removal_preserves_unrelated_flags_extensions_and_hosts(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(Path,'home',return_value=Path(tmp)):
             flags=Path(tmp)/'.config/chromium-flags.conf'; flags.parent.mkdir()
-            extension=str(common.PLUGIN/'browser')
+            extension=str(common.PLUGIN/'browser/extension')
             original='--other-flag\n--load-extension=/keep,'+extension+',/also-keep\n'
             flags.write_text(original)
             hosts=Path(tmp)/'.config/chromium/NativeMessagingHosts'; hosts.mkdir(parents=True)

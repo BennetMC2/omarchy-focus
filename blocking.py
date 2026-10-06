@@ -58,28 +58,53 @@ def installed_apps():
             found[fields['Name']] = 'site ' + site[1].removeprefix('www.') if site else fields.get('StartupWMClass') or entry.stem
     return sorted(found.items())
 
+def extension_path():
+    # One folder down: the marketplace reads any manifest.json directly under a top-level folder as a second plugin.
+    return str(common.PLUGIN/'browser/extension')
+
+def former_path(): return str(common.PLUGIN/'browser')
+
+def loaded(line):
+    """The extension folders a flags line loads."""
+    return line.rstrip('\r\n').split('=', 1)[1].split(',') if line.startswith('--load-extension=') else []
+
+def browser_moved():
+    """True while a flags file still loads the extension from where it lived before 2.3."""
+    for _, flags, _ in BROWSERS:
+        try: lines = (Path.home()/flags).read_text().splitlines()
+        except OSError: continue
+        if any(former_path() in loaded(line) for line in lines): return True
+    return False
+
 def extension_id(path):
     # Chromium derives an unpacked extension's id from its absolute path.
     return ''.join(chr(97 + int(c, 16)) for c in hashlib.sha256(str(path).encode()).hexdigest()[:32])
 
 def browser_status():
-    extension = str(common.PLUGIN/'browser')
+    extension = extension_path()
     def has(path, needle):
         try: return needle in (Path.home()/path).read_text()
         except OSError: return False
-    return {'extension': any(has(flags, extension) for _, flags, _ in BROWSERS),
+    def loads(path):
+        try: return any(extension in loaded(line) for line in (Path.home()/path).read_text().splitlines())
+        except OSError: return False
+    return {'extension': any(loads(flags) for _, flags, _ in BROWSERS),
             'host': any(has(hosts + '/' + NATIVE_HOST + '.json', extension_id(extension)) for _, _, hosts in BROWSERS)}
 
 def browser_connect():
     """Load the companion extension through the browser flags file and register its native host."""
-    extension = str(common.PLUGIN/'browser')
+    extension = extension_path()
     done = []
     for name, flags, hosts in BROWSERS:
         flags, hosts = Path.home()/flags, Path.home()/hosts
         if not flags.exists() and not shutil.which(name): continue
         lines = flags.read_text().splitlines() if flags.exists() else []
-        if not any(extension in line for line in lines):
+        if not any(extension in loaded(line) for line in lines):
             if flags.exists() and not flags.with_name(flags.name + '.before-focus').exists(): shutil.copy2(flags, flags.with_name(flags.name + '.before-focus'))
+            # A copy from before the extension moved would now point at a folder with no extension in it.
+            kept = [[path for path in loaded(line) if path != former_path()] for line in lines]
+            lines = [('--load-extension=' + ','.join(paths) if paths else None) if line.startswith('--load-extension=') else line for line, paths in zip(lines, kept)]
+            lines = [line for line in lines if line is not None]
             index = next((i for i, line in enumerate(lines) if line.startswith('--load-extension=')), None)
             if index is None: lines.append('--load-extension=' + extension)
             else: lines[index] += ',' + extension
@@ -94,7 +119,7 @@ def browser_connect():
 
 def browser_disconnect():
     """Remove just Focus's extension path and native host; preserve other extensions and flags."""
-    extension = str(common.PLUGIN/'browser')
+    extension = extension_path()
     changed = []
     for name, flags_name, hosts_name in BROWSERS:
         flags = Path.home()/flags_name
@@ -105,7 +130,7 @@ def browser_disconnect():
                 if line.startswith('--load-extension='):
                     ending = '\n' if line.endswith('\n') else ''
                     paths = line.rstrip('\r\n').split('=', 1)[1].split(',')
-                    kept = [path for path in paths if path != extension]
+                    kept = [path for path in paths if path not in (extension, former_path())]
                     if kept != paths:
                         if kept: lines.append('--load-extension=' + ','.join(kept) + ending)
                         continue
