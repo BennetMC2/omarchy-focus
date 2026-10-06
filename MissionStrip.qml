@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Wayland
 import qs.Commons
 
-// While locked, a thin line under the bar keeps the main task in view. Click it to open Focus.
+// While locked, a thin line under the bar keeps the main task in view. Click it to open Bouncer.
 Variants {
   id: strip
   property var service: null

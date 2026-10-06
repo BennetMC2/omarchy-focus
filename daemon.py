@@ -1,4 +1,4 @@
-"""The Focus service: one loop owning the state, the blocking, the agent and every connected client."""
+"""The Bouncer service: one loop owning the state, the blocking, the agent and every connected client."""
 import copy
 import difflib
 import fcntl
@@ -26,12 +26,12 @@ from backend import Backend
 from model import Model, folder
 from tools import Tools
 
-# The very first thing Focus says is fixed: instant, and never an experiment in phrasing.
-FIRST_RUN = "I'm Focus. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time? Pick any below, or type your own."
+# The very first thing Bouncer says is fixed: instant, and never an experiment in phrasing.
+FIRST_RUN = "I'm Bouncer. Each morning you tell me what you need to get done, and I keep your time-wasting sites and apps locked until it's done. Which ones waste your time? Pick any below, or type your own."
 # Offered as clickable picks with the first question; anything else can be typed.
 COMMON_SITES = ['youtube.com', 'x.com', 'reddit.com', 'instagram.com', 'facebook.com', 'tiktok.com', 'twitch.tv', 'netflix.com', 'linkedin.com', 'news.ycombinator.com']
 HELP = ('/planning quick|guided · /config shows planning style, the agent and approved folders · /folder PATH approves a folder (/folder remove PATH) · /provider auto|claude|codex|grok|opencode · '
-        '/model NAME (/models lists them; for Claude: haiku is the low-cost one) · /endpoint URL · /update installs a newer Focus (/update check, /update on|off) · '
+        '/model NAME (/models lists them; for Claude: haiku is the low-cost one) · /endpoint URL · /update installs a newer Bouncer (/update check, /update on|off) · '
         '/forget deletes the conversation and any stored screenshot')
 YES, NO = ('y', 'yes', 'allow', 'ok', 'okay', 'sure', 'do it'), ('n', 'no', 'deny', 'cancel', 'not now', 'stop')
 NO_AGENT = "Install and sign in to Claude Code, Codex, Grok Build or OpenCode, then choose it in Settings. You can still capture tasks directly."
@@ -86,7 +86,7 @@ class Daemon:
         settings = self.model.s['settings']
         self.config = (settings['provider'], settings['model'], settings['endpoint'], tuple(settings['roots']))
         self.chat = Chat()
-        if self.moved: self.chat.add('system', 'This version moved the Focus browser extension. Restart your browser to load it again.')
+        if self.moved: self.chat.add('system', 'This version moved the Bouncer browser extension. Restart your browser to load it again.')
         self.session = agent.make_session(self)
         self.tools = Tools(self.model, self)
         self.selector = selectors.DefaultSelector()
@@ -120,7 +120,7 @@ class Daemon:
         self.chat.busy, self.chat.streaming, self.chat.activity = self.session.busy, '', ''
         if text:
             self.chat.add('agent', text)
-            if not self.visible: toast('Focus', text)
+            if not self.visible: toast('Bouncer', text)
     def turn_failed(self, text):
         self.chat.busy, self.chat.streaming, self.chat.activity = False, '', ''
         self.chat.add('system', text)
@@ -135,8 +135,8 @@ class Daemon:
         if self.chat.consent: raise ValueError('Already waiting for the user to answer another request.')
         info = self.info()
         if kind == 'screen' and not info['vision']: raise ValueError('This model cannot see images, so a screenshot would not help. Use another kind of evidence.')
-        text = {'folder': 'Let Focus read files in %s? Keys and credentials inside it are never read.' % value,
-                'link': 'Let Focus open this link? %s' % value,
+        text = {'folder': 'Let Bouncer read files in %s? Keys and credentials inside it are never read.' % value,
+                'link': 'Let Bouncer open this link? %s' % value,
                 'screen': 'Take a screenshot of this monitor? You will see it before anything is sent.'}[kind]
         self.chat.consent = {'kind': kind, 'value': value, 'text': text, 'preview': '', 'goes': info['label']}
         return 'Asked the user. Say in a few words what you asked for and stop; their answer arrives as an event.'
@@ -206,13 +206,13 @@ class Daemon:
         if was_busy: self.turn_failed('Settings changed mid-reply, so that reply was dropped. Say it again.')
 
     def models(self):
-        """What the current agent can run, cheapest first where Focus knows the order."""
+        """What the current agent can run, cheapest first where Bouncer knows the order."""
         kind = self.info()['provider']
         try:
             if kind == 'claude': return 'Claude models: haiku (lowest cost, fastest) · sonnet (default) · opus (most capable). Set one with /model NAME.'
             if kind == 'grok': return 'Grok uses its CLI default model. Run grok models in a terminal, then /model NAME here.'
             if kind == 'opencode':
-                # Only models of providers it is signed in to and Focus can route to.
+                # Only models of providers it is signed in to and Bouncer can route to.
                 signed = set(read(agent.opencode_auth())) & set(agent.netgate.OPENCODE_HOSTS)
                 listed = [m for m in common.run([agent.binary('opencode'), 'models'], timeout=20).split() if m.partition('/')[0] in signed]
                 return 'OpenCode models: ' + (' · '.join(listed[:40]) or 'none; sign in with opencode auth login') + '. Set one with /model PROVIDER/NAME.'
@@ -239,9 +239,9 @@ class Daemon:
             if rest == 'check' or not found['available']:
                 if not found['managed']: return 'This copy was not installed with omarchy plugin add, so it updates by hand.'
                 self.updates.look()
-                return 'Focus %s. Checking for a newer one; it shows on the card if there is.' % found['current']
+                return 'Bouncer %s. Checking for a newer one; it shows on the card if there is.' % found['current']
             self.start_update()
-            return 'Updating to %s. Focus restarts when it is done.' % (found['version'] or 'the newest version')
+            return 'Updating to %s. Bouncer restarts when it is done.' % (found['version'] or 'the newest version')
         if name == 'folder':
             if rest.startswith('remove '):
                 target = str(Path(rest[7:].strip()).expanduser())
@@ -298,7 +298,7 @@ class Daemon:
         return 'The password prompt is on screen. Tell them so in a few words and stop; the result arrives as an event.'
 
     def start_update(self):
-        if not self.updates.install(lambda error: self.done.put(('updated', error))): raise ValueError('Focus is already checking or updating.')
+        if not self.updates.install(lambda error: self.done.put(('updated', error))): raise ValueError('Bouncer is already checking or updating.')
 
     def refresh_helper(self):
         """A new version shipped a new root helper: put it in place, with the same single password prompt as setup."""
@@ -538,7 +538,7 @@ class Daemon:
             if finished[0] == 'updated':
                 if finished[1]: self.chat.add('system', 'The update did not install: ' + finished[1])
                 else:
-                    self.chat.add('system', 'Updated. Focus is restarting to load it.')
+                    self.chat.add('system', 'Updated. Bouncer is restarting to load it.')
                     self.publish()
                     # Without the shell's own restart, at least the service comes back on the new code.
                     if not update.restart(): self.running = False

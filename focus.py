@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Focus entry point: the service, the CLI, the agent's tool server and the browser's native bridge."""
+"""Bouncer entry point: the service, the CLI, the agent's tool server and the browser's native bridge."""
 import argparse
 import codecs
 import fcntl
@@ -168,10 +168,10 @@ def uninstall():
         run(['pkexec', '/usr/bin/rm', '-f', '--'] + owned, timeout=90)
     link = Path.home()/'.local/bin/focusctl'
     if link.is_symlink() and link.resolve() == common.PLUGIN/'focusctl': link.unlink()
-    return 'Focus removed. Restart your browser. Tasks and history are kept in ' + str(common.STATE) + '.'
+    return 'Bouncer removed. Restart your browser. Tasks and history are kept in ' + str(common.STATE) + '.'
 
 def say(text):
-    """Say one thing to the Focus agent and print its reply."""
+    """Say one thing to the Bouncer agent and print its reply."""
     with socket.socket(socket.AF_UNIX) as sock:
         sock.settimeout(330)
         sock.connect(str(common.SOCKET))
@@ -192,16 +192,16 @@ def say(text):
 def main():
     if len(sys.argv) == 1 or sys.argv[1].startswith('chrome-extension://'):
         native(); return
-    p = argparse.ArgumentParser(description='Focus: tell it your day, earn your distractions back')
+    p = argparse.ArgumentParser(description='Bouncer: tell it your day, earn your distractions back')
     sub = p.add_subparsers(dest='command', required=True)
     for name in ('serve', 'mcp', 'status', 'apps', 'recover', 'effect'): sub.add_parser(name)
-    s = sub.add_parser('say', help='say something to the Focus agent'); s.add_argument('text', nargs='+')
+    s = sub.add_parser('say', help='say something to the Bouncer agent'); s.add_argument('text', nargs='+')
     c = sub.add_parser('config', help='show or change where the agent runs and what it may read')
     c.add_argument('key', nargs='?', choices=['provider', 'model', 'endpoint', 'folder', 'unfolder', 'planning']); c.add_argument('value', nargs='?', default='')
     sub.add_parser('doctor', help='check dependencies without changing anything')
     sub.add_parser('uninstall', help='recover, remove browser integration, plugin and system helper; keep history')
     sub.add_parser('forget', help='delete the conversation and any stored screenshot')
-    u = sub.add_parser('update', help='install a newer Focus if one has been published'); u.add_argument('--check', action='store_true', help='only say whether there is one')
+    u = sub.add_parser('update', help='install a newer Bouncer if one has been published'); u.add_argument('--check', action='store_true', help='only say whether there is one')
     r = sub.add_parser('rpc'); r.add_argument('payload')
     l = sub.add_parser('list'); l.add_argument('--json', action='store_true')
     v = sub.add_parser('verdict'); v.add_argument('id'); group = v.add_mutually_exclusive_group(required=True); group.add_argument('--pass', dest='passed', action='store_true'); group.add_argument('--fail', action='store_true'); v.add_argument('--note', required=True); v.add_argument('--revision', type=int)
@@ -221,8 +221,8 @@ def main():
         import update
         found = update.check()
         if not found['available']:
-            print('Focus %s is up to date.' % update.current()); return
-        print('Focus %s is available (%d change%s).' % (found['version'] or 'update', found['changes'], '' if found['changes'] == 1 else 's'))
+            print('Bouncer %s is up to date.' % update.current()); return
+        print('Bouncer %s is available (%d change%s).' % (found['version'] or 'update', found['changes'], '' if found['changes'] == 1 else 's'))
         if args.check: return
         update.install()
         if blocking.helper_stale(): print('The blocking helper changed in this version. Open the card to refresh it.')

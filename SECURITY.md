@@ -1,7 +1,11 @@
 # Security
 
-Focus changes browser policies and hosts entries through a narrow root helper. The agent reviews only approved evidence through Focus's tools. Codex, Grok and OpenCode also run in a sandbox.
+If you find a security problem, please report it privately through the Security tab on this repository ("Report a vulnerability"). Please don't post exploit details or credentials in a public issue.
 
-Please report a suspected security issue privately through GitHub's private vulnerability reporting when available. If that channel isn't enabled, open an issue asking for a private contact without posting exploit details or credentials.
+A few things that help when judging a report:
 
-Focus is an accountability tool on a machine its user controls. It is not a tamper-proof security boundary against that user. See the README for what is stored locally and sent to model providers.
+- Bouncer changes your browser policies and `/etc/hosts` through one small root-owned helper. Installing and removing that helper are the only other things that ask for root.
+- The agent can only look at what you approve, through Bouncer's own tools. Codex, Grok and OpenCode also run inside a sandbox.
+- Bouncer is there to keep you honest with yourself on a machine you control. Getting around it as the owner of that machine is expected, and isn't a vulnerability.
+
+The README's Privacy section says what stays on your machine and what goes to a model provider.

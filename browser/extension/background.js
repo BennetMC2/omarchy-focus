@@ -46,7 +46,7 @@ function connect() {
   if (port) return;
   port = chrome.runtime.connectNative('local.omarchy.focus');
   port.onMessage.addListener(state => {
-    queue = queue.then(() => apply(state)).catch(error => console.error('Focus:', error));
+    queue = queue.then(() => apply(state)).catch(error => console.error('Bouncer:', error));
   });
   port.onDisconnect.addListener(() => {
     const error = chrome.runtime.lastError?.message || 'Disconnected';

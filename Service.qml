@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
 
-// Owns the Focus service process and a live connection to it. State and conversation are pushed, not polled.
+// Owns the Bouncer service process and a live connection to it. State and conversation are pushed, not polled.
 Item {
   id: root
   property var shell: null

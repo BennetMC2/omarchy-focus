@@ -1,4 +1,4 @@
-"""What Focus does to the machine: parks blocked windows, drives the root helper, wires up the browser."""
+"""What Bouncer does to the machine: parks blocked windows, drives the root helper, wires up the browser."""
 import hashlib
 import json
 import os
@@ -111,14 +111,14 @@ def browser_connect():
             flags.parent.mkdir(parents=True, exist_ok=True)
             flags.write_text('\n'.join(lines) + '\n')
         hosts.mkdir(parents=True, exist_ok=True)
-        (hosts/(NATIVE_HOST + '.json')).write_text(json.dumps({'name': NATIVE_HOST, 'description': 'Local Focus state bridge', 'path': str(common.PLUGIN/'focus.py'),
+        (hosts/(NATIVE_HOST + '.json')).write_text(json.dumps({'name': NATIVE_HOST, 'description': 'Local Bouncer state bridge', 'path': str(common.PLUGIN/'focus.py'),
             'type': 'stdio', 'allowed_origins': ['chrome-extension://' + extension_id(extension) + '/']}, indent=2) + '\n')
         done.append(name)
     if not done: raise ValueError('No Chromium or Brave installation found.')
     return done
 
 def browser_disconnect():
-    """Remove just Focus's extension path and native host; preserve other extensions and flags."""
+    """Remove just Bouncer's extension path and native host; preserve other extensions and flags."""
     extension = extension_path()
     changed = []
     for name, flags_name, hosts_name in BROWSERS:
@@ -249,7 +249,7 @@ class Runtime:
                             self.save_held()
                         if c.get('pinned'): dispatch(a, pin=True)
                         dispatch(a, PARKING)
-                        # Announce only a fresh attempt: not windows swept up as the lock begins, nor while they are talking to Focus.
+                        # Announce only a fresh attempt: not windows swept up as the lock begins, nor while they are talking to Bouncer.
                         if now - self.blocked_at > 2 and not changed and not quiet:
                             self.blocked_at = now
                             self.blocked_name = c.get('initialClass') or c.get('class') or 'App'

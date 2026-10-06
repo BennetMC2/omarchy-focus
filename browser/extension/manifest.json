@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Omarchy Focus",
+  "name": "Bouncer",
   "version": "1.0.0",
   "description": "Local task verdicts and website blocking",
   "permissions": ["nativeMessaging", "declarativeNetRequest", "storage", "tabs", "alarms", "webNavigation"],

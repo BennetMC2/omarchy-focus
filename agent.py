@@ -1,4 +1,4 @@
-"""The Focus agent: one long-running, streaming session that runs the day through tools."""
+"""The Bouncer agent: one long-running, streaming session that runs the day through tools."""
 import datetime as dt
 import json
 import os
@@ -13,7 +13,7 @@ import common
 import netgate
 from common import one_line
 
-PERSONA = '''You are Focus, the gatekeeper built into the user's Omarchy desktop. Each day they tell you what has to get done. Until you have passed those tasks, the websites and apps that distract them stay blocked. You are the only interface: a small card shows their task list and this conversation. They can also add tasks directly and use Settings without asking you.
+PERSONA = '''You are Bouncer, the gatekeeper built into the user's Omarchy desktop. Each day they tell you what has to get done. Until you have passed those tasks, the websites and apps that distract them stay blocked. You are the only interface: a small card shows their task list and this conversation. They can also add tasks directly and use Settings without asking you.
 
 Voice
 - Talk like a person. Short, everyday words, the way you would say it out loud to a friend. No clever phrasing, metaphors or slogans; if a sentence could be on a poster, rewrite it.
@@ -64,12 +64,12 @@ Rules you enforce
 - If recovery is active, blocking is off until they start the day again.
 
 First run (focus_state says setup is pending)
-- They have already been told what Focus does and asked which sites and apps waste their time. Block what they name, then ask once to finish setup, and say both things it changes: it installs the system helper, which needs their password once so the blocks work in every browser, and it adds the Focus extension to the Chromium and Brave launch flags, keeping a backup of the flags file. Their yes covers both.
+- They have already been told what Bouncer does and asked which sites and apps waste their time. Block what they name, then ask once to finish setup, and say both things it changes: it installs the system helper, which needs their password once so the blocks work in every browser, and it adds the Bouncer extension to the Chromium and Brave launch flags, keeping a backup of the flags file. Their yes covers both.
 - When they agree, call install_blocking_helper and say only that the prompt is up. When the event reports the result, call connect_browser and finish_setup without asking again, then say briefly that everything comes back when every task passes, that the browser needs a restart to pick up its extension, and that saying "go hard" makes it stricter; then ask what today holds.
 - If they ask what something does, tell them straight:
-  - The helper is a small root-owned script at /usr/local/bin/focus-root-helper. It only writes Focus's own policy file for Chromium, Brave and Chrome and one marked block in /etc/hosts, and removes them again. The install also adds a rule so Focus can run that one script later without asking for the password each time. `focusctl recover` removes every block.
+  - The helper is a small root-owned script at /usr/local/bin/focus-root-helper. It only writes Bouncer's own policy file for Chromium, Brave and Chrome and one marked block in /etc/hosts, and removes them again. The install also adds a rule so Bouncer can run that one script later without asking for the password each time. `focusctl recover` removes every block.
   - Without the helper, blocking relies on the browser extension alone, so another browser gets around it.
-  - connect_browser adds the Focus extension to the Chromium and Brave launch flags and registers a local bridge, so a blocked site shows the task list instead of an error.
+  - connect_browser adds the Bouncer extension to the Chromium and Brave launch flags and registers a local bridge, so a blocked site shows the task list instead of an error.
   - Privacy, said plainly: tasks, history and settings stay in files on this machine. But you, the agent, run wherever focus_state says under "model". If that is a remote server, everything in this conversation is sent there to be read: what they type, the task list, and any file, link or screenshot they let you look at. Never say that everything is local unless focus_state says the model runs on this machine.
   - They can type /planning quick or /planning guided to change planning style, /config to see the model and approved folders, /folder to approve or remove one, /provider and /model to change where you run, and /forget to delete the conversation and any stored screenshot. Those are theirs to use; you cannot change them.
   - Blocking starts the moment setup finishes and stays on until the day's tasks pass.
@@ -90,7 +90,7 @@ def environment(settings, token):
                    DISABLE_TELEMETRY='1', DISABLE_ERROR_REPORTING='1', DISABLE_AUTOUPDATER='1', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1')
     return env
 
-# The coding agents Focus can drive. Each brings its own sign-in; Focus only attaches its tools.
+# The coding agents Bouncer can drive. Each brings its own sign-in; Bouncer only attaches its tools.
 AGENTS = ('claude', 'codex', 'grok', 'opencode')
 
 FOUND = {}
@@ -137,9 +137,9 @@ def available():
 
 def jail(program, private, scratch, network=True):
     """Run an agent that keeps tools of its own where they have nothing to find: it sees its program, its own
-    sign-in files, an empty scratch folder and Focus's tool socket. Not the home directory, not the projects."""
+    sign-in files, an empty scratch folder and Bouncer's tool socket. Not the home directory, not the projects."""
     bwrap = shutil.which('bwrap')
-    if not bwrap: raise OSError('This agent needs bubblewrap (the bwrap command) so Focus can keep it away from your files.')
+    if not bwrap: raise OSError('This agent needs bubblewrap (the bwrap command) so Bouncer can keep it away from your files.')
     home = str(Path.home())
     command = [bwrap] + ([] if network else ['--unshare-net']) + ['--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup', '--die-with-parent', '--new-session',
                '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin', '--symlink', 'usr/lib', '/lib', '--symlink', 'usr/lib64', '/lib64',
@@ -157,11 +157,11 @@ def jail(program, private, scratch, network=True):
         command += ['--bind', path, path]
     return command + ['--bind', str(common.SOCKET), str(common.SOCKET), '--bind', str(scratch), str(scratch), '--chdir', str(scratch)]
 
-# Everything optional in Codex that would give it a tool of its own. Its tool host stays on: Focus's tools arrive through it.
+# Everything optional in Codex that would give it a tool of its own. Its tool host stays on: Bouncer's tools arrive through it.
 CODEX_OFF = ('shell_tool', 'unified_exec', 'unified_exec_tty', 'apps', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use',
              'hooks', 'image_generation', 'in_app_browser', 'in_app_local_automation', 'multi_agent', 'plugins', 'plugin_sharing', 'remote_plugin',
              'skill_search', 'skill_mcp_dependency_install', 'sleep_tool', 'goals', 'tool_suggest', 'workspace_dependencies', 'view_image')
-# OpenCode's own tools. Focus's arrive through its MCP host, which stays on.
+# OpenCode's own tools. Bouncer's arrive through its MCP host, which stays on.
 OPENCODE_OFF = ('bash', 'edit', 'write', 'read', 'grep', 'glob', 'list', 'patch', 'webfetch', 'websearch', 'task', 'todowrite', 'todoread', 'skill', 'lsp')
 GATES = {}
 
@@ -171,7 +171,7 @@ def opencode_provider(settings):
     """OpenCode can talk to many providers. The chosen model names one, and that decides where the jail may connect."""
     provider, _, name = (settings.get('model') or '').partition('/')
     if not provider or not name: raise ValueError('Pick a model for OpenCode: /models lists them, then /model PROVIDER/NAME.')
-    if provider not in netgate.OPENCODE_HOSTS: raise ValueError('Focus does not know where %s runs, so it will not open a route to it. Supported through OpenCode: %s.' % (provider, ', '.join(netgate.OPENCODE_HOSTS)))
+    if provider not in netgate.OPENCODE_HOSTS: raise ValueError('Bouncer does not know where %s runs, so it will not open a route to it. Supported through OpenCode: %s.' % (provider, ', '.join(netgate.OPENCODE_HOSTS)))
     return provider
 
 def gate(kind, domains=None):
@@ -261,7 +261,7 @@ class Session:
         if override: return [override]
         server = {'command': '/usr/bin/python3', 'args': [str(common.PLUGIN/'focus.py'), 'mcp'],
                   'env': {'FOCUS_STATE_HOME': str(common.STATE), 'FOCUS_SESSION': self.token}}
-        # No built-in tools at all: the model can only call Focus's own, which enforce the limits themselves.
+        # No built-in tools at all: the model can only call Bouncer's own, which enforce the limits themselves.
         return [binary('claude') or 'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
                 '--model', settings.get('model') or 'sonnet', '--no-session-persistence', '--strict-mcp-config',
                 '--mcp-config', json.dumps({'mcpServers': {'focus': server}}), '--setting-sources', '', '--system-prompt', PERSONA,
@@ -401,7 +401,7 @@ class ExecSession(Session):
         command += ['-c', 'mcp_servers.focus.command=%s' % json.dumps(server[0]), '-c', 'mcp_servers.focus.args=%s' % json.dumps(server[1:]),
                     '-c', 'mcp_servers.focus.env={%s}' % ','.join('%s=%s' % (k, json.dumps(v)) for k, v in tools.items()),
                     '-c', 'mcp_servers.focus.default_tools_approval_mode="approve"',
-                    # Focus's turns are short and tool-driven; deep reasoning only makes each reply slower and dearer.
+                    # Bouncer's turns are short and tool-driven; deep reasoning only makes each reply slower and dearer.
                     '-c', 'model_reasoning_effort="low"']
         if settings.get('model'): command += ['-m', settings['model']]
         if self.attach: command += ['-i', self.attach]
@@ -537,7 +537,7 @@ class OpenCodeSession(ExecSession):
         server = ['/usr/bin/python3', str(common.PLUGIN/'focus.py'), 'mcp']
         off = {name: False for name in OPENCODE_OFF}
         config = {'autoupdate': False, 'share': 'disabled', 'tools': off,
-                  'agent': {'focus': {'mode': 'primary', 'description': 'Focus', 'prompt': PERSONA, 'tools': off}},
+                  'agent': {'focus': {'mode': 'primary', 'description': 'Bouncer', 'prompt': PERSONA, 'tools': off}},
                   'mcp': {'focus': {'type': 'local', 'command': server, 'enabled': True,
                                     'environment': {'FOCUS_STATE_HOME': str(common.STATE), 'FOCUS_SESSION': self.token}}}}
         env = {key: os.environ[key] for key in ('HOME', 'USER', 'LOGNAME', 'LANG', 'TERM') if key in os.environ}

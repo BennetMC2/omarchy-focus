@@ -25,4 +25,4 @@ RULE
   installs+=' && /usr/bin/install -o root -g root -m 644 -D "$3" /etc/polkit-1/rules.d/49-local.focus.rules'
 fi
 "${elevate[@]}" /usr/bin/bash -c "$installs" focus-setup "$focus_source/setup/focus-root-helper" "$focus_source/setup/local.focus.policy" "$focus_rule"
-printf '%s\n' 'Focus helper installed. Run focusctl recover to remove all Focus blocking.'
+printf '%s\n' 'Bouncer helper installed. Run focusctl recover to remove all Bouncer blocking.'

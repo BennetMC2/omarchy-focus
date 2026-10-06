@@ -1,4 +1,4 @@
-"""Paths and small helpers shared by the Focus service, CLI and tool server. Standard library only."""
+"""Paths and small helpers shared by the Bouncer service, CLI and tool server. Standard library only."""
 import json
 import os
 from pathlib import Path

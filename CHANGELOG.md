@@ -1,20 +1,29 @@
 # Changelog
 
-## 2.3.0-beta.1 — unreleased
+## 2.3.0-beta.1
 
-- Put tasks first in the card. Move agent settings and the full blocklist into Settings.
-- Keep the input visible while scrolling. Add a separate conversation history view.
-- Add direct task capture, morning edits, and an explicit Start day button.
-- Default to quick capture. Guided planning remains available.
-- Add Grok Build alongside Claude Code and Codex.
-- Add OpenCode: an isolated profile, its own tools off, and a network route only to the chosen model's provider.
-- Add whole-batch validation and persistent receipts for direct task submissions.
-- Refuse additions after a lockdown day starts, matching the documented rule.
-- Add dependency checks and uninstall cleanup for browser flags and native hosts.
-- Add a repeatable live-provider smoke test and CI.
-- Notice newer published versions and install them on request (card, `/update`, `focusctl update`). Offer to refresh the root helper when a version changes it.
-- Move the browser extension to `browser/extension/`, as the marketplace layout requires. Existing installs are re-pointed on the first start; restart the browser afterwards.
-- First-run setup says that it adds the browser extension to the launch flags before it does so.
-- Fix: changing the reset time, or a clock set backwards, could reopen a finished day and unlock without any task passing.
-- Fix: rewording a task no longer discards its check.
-- Fix: the idle service no longer looks up the agent binary several times a second.
+Renamed from Omarchy Focus to Bouncer. The plugin ID, the `focusctl` command, your tasks and your history are unchanged.
+
+New:
+
+- The card puts your tasks first. Agent settings and the full blocklist moved to a Settings page, and the conversation has its own History page.
+- The input stays put while you scroll the list.
+- You can add tasks directly, edit them in the morning, and start the day with a button.
+- Quick capture is the default: it writes your tasks down without asking questions. Guided planning is still available.
+- Grok Build and OpenCode work alongside Claude Code and Codex. OpenCode runs with a throwaway profile, its own tools off, and a network route only to the provider of the model you chose.
+- Bouncer notices when a newer version is out and installs it when you ask, from the card, with `/update`, or with `focusctl update`. If a version changes the root helper, the card offers to refresh it.
+- `focusctl doctor` checks what's installed, and uninstalling now cleans up the browser flags and native hosts.
+- Setup tells you it's adding the browser extension to your launch flags before it does.
+- A repeatable live test for each agent, and tests running on GitHub.
+
+Changed:
+
+- Adding several tasks at once is all-or-nothing, and a retried submission can't add them twice.
+- Lockdown now refuses new tasks once the day has started, which is what the docs always said.
+- The browser extension moved to `browser/extension/` to fit the marketplace's layout. Existing installs are pointed at the new folder the first time they start; restart your browser afterwards.
+
+Fixed:
+
+- Changing the reset time, or the clock going backwards, could put you back in yesterday's finished day and unlock everything with no task passed.
+- Rewording a task threw away its check.
+- The service was looking up the agent program several times a second while idle.

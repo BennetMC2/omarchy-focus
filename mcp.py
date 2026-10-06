@@ -1,4 +1,4 @@
-"""Model Context Protocol server over stdio: hands the agent's tool calls to the Focus service."""
+"""Model Context Protocol server over stdio: hands the agent's tool calls to the Bouncer service."""
 import json
 import os
 import sys

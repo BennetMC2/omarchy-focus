@@ -1,7 +1,7 @@
 """The only way out of the agent jail: a gate that lets a jailed agent reach its own provider and nothing else.
 
 The jail has no network of its own. Inside it, a small bridge listens on loopback and passes connections
-over a Unix socket to the gate, which runs in the Focus service and checks every destination.
+over a Unix socket to the gate, which runs in the Bouncer service and checks every destination.
 """
 import os
 import select

@@ -7,7 +7,7 @@ Window {
   id: window
   width: Number(Quickshell.env("FOCUS_PREVIEW_WIDTH")) || 468; height: 628; visible: true
   color: Color.popups.background
-  title: "Focus preview — disposable data"
+  title: "Bouncer preview — disposable data"
   property string previewPage: Quickshell.env("FOCUS_PREVIEW_PAGE") || "today"
   Item {
     id: canvas

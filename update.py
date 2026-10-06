@@ -1,4 +1,4 @@
-"""Notices when a newer Focus has been published, and installs it when the user says so. Nothing updates on its own."""
+"""Notices when a newer Bouncer has been published, and installs it when the user says so. Nothing updates on its own."""
 import json
 import os
 import shutil

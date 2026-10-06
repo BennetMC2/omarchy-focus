@@ -11,7 +11,7 @@ Panel {
   readonly property var service: shell ? shell.serviceFor("local.focus") : null
   readonly property var state: service ? service.state : ({completed: 0, total: 0, locked: true})
   readonly property string screenName: button.QsWindow.window && button.QsWindow.window.screen ? button.QsWindow.window.screen.name : ""
-  // With a bar on every monitor, only the one Focus was opened on shows the dropdown.
+  // With a bar on every monitor, only the one Bouncer was opened on shows the dropdown.
   readonly property bool wanted: !!service && service.view === "open" && !service.screenLocked
     && (service.screenName === "" || screenName === "" || service.screenName === screenName)
   implicitWidth: button.implicitWidth
@@ -24,7 +24,7 @@ Panel {
     id: button
     bar: root.bar
     text: "    " + (root.state.completed || 0) + "/" + (root.state.total || 0)
-    tooltipText: root.state.setup === false ? "Focus · say hello" : root.state.recovered ? "Focus · recovery, blocking off" : !root.state.started ? "Focus · not started" : root.state.locked ? "Focus · " + ((root.state.total || 0) - (root.state.completed || 0)) + " left" : "Focus · unlocked"
+    tooltipText: root.state.setup === false ? "Bouncer · say hello" : root.state.recovered ? "Bouncer · recovery, blocking off" : !root.state.started ? "Bouncer · not started" : root.state.locked ? "Bouncer · " + ((root.state.total || 0) - (root.state.completed || 0)) + " left" : "Bouncer · unlocked"
     active: root.opened
     onPressed: {
       if (root.service) root.service.view ? root.service.close() : root.service.openHome(root.screenName)
