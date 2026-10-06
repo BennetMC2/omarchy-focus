@@ -4,13 +4,11 @@ A plugin for the Omarchy shell that blocks the sites and apps that distract you 
 
 There's one small card with an agent on it. Tell it your tasks, or use **Add task** to put them straight on the list. It manages the blocklist and checks your work before it lets you back on YouTube.
 
-Your tasks, history and settings are stored on your machine. The agent isn't. Focus uses Claude, OpenAI through Codex, Grok through Grok Build, or whichever provider you pick in OpenCode. What you type, plus any files or screenshots you let it see, goes to the provider you've chosen. More in [Privacy](#privacy).
+Your tasks, history and settings are stored on your machine. Focus uses Claude, OpenAI through Codex, Grok through Grok Build, or whichever provider you pick in OpenCode. What you type, plus any files or screenshots you let it see, goes to the provider you've chosen. More in [Privacy](#privacy).
 
-**Public beta candidate.** This has been tested on the author's machine, with disposable tasks and automated tests. A fresh Omarchy installation still needs a full desktop test. See [what's been tested](docs/compatibility.md).
+If this plug-in helps you stay focused and productive, please give it a star and pass it on. https://ko-fi.com/bennetmc 
 
 ![The Focus card with sample tasks](docs/images/card.png)
-
-[Watch the 14-second UI demo](docs/images/demo.mp4) — sample tasks, rendered from the actual card.
 
 ## Using it
 
