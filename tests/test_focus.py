@@ -334,11 +334,21 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(blocking.browser_status(),{'extension':False,'host':False})
                 blocking.browser_connect(); self.assertEqual(blocking.browser_connect(),['chromium'])
                 self.assertEqual(blocking.browser_status(),{'extension':True,'host':True})
-            extension=str(common.PLUGIN/'browser')
+            extension=str(common.PLUGIN/'browser/extension')
             self.assertEqual(flags.read_text(),'--ozone-platform=wayland\n--load-extension=/usr/share/other,'+extension+'\n')
             self.assertEqual((home/'.config/chromium-flags.conf.before-focus').read_text().count('focus'),0)
             host=json.loads((home/'.config/chromium/NativeMessagingHosts/local.omarchy.focus.json').read_text())
             self.assertEqual(host['allowed_origins'],['chrome-extension://'+blocking.extension_id(extension)+'/'])
+        # An install from before the extension moved one folder down is re-pointed, not left loading an empty folder.
+        with tempfile.TemporaryDirectory() as tmp:
+            home=Path(tmp); (home/'.config').mkdir(); flags=home/'.config/chromium-flags.conf'; former=str(common.PLUGIN/'browser')
+            flags.write_text('--load-extension=/usr/share/other,'+former+'\n')
+            with patch.object(blocking.Path,'home',return_value=home),patch.object(blocking.shutil,'which',return_value=None):
+                self.assertTrue(blocking.browser_moved()); self.assertFalse(blocking.browser_status()['extension'])
+                blocking.browser_connect()
+                self.assertFalse(blocking.browser_moved()); self.assertEqual(blocking.browser_status(),{'extension':True,'host':True})
+                self.assertEqual(flags.read_text(),'--load-extension=/usr/share/other,'+extension+'\n')
+                flags.write_text('--load-extension='+former+'\n--other\n'); blocking.browser_disconnect(); self.assertEqual(flags.read_text(),'--other\n')
         # Pinned so a change to the derivation is noticed; the formula was checked against an id Chromium assigned.
         self.assertEqual(blocking.extension_id('/home/user/.config/omarchy/plugins/local.focus/browser'),'ddlcfpcpogihbkdojjfgljoapmdeomeg')
 

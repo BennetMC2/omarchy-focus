@@ -13,6 +13,7 @@
 - Add dependency checks and uninstall cleanup for browser flags and native hosts.
 - Add a repeatable live-provider smoke test and CI.
 - Notice newer published versions and install them on request (card, `/update`, `focusctl update`). Offer to refresh the root helper when a version changes it.
+- Move the browser extension to `browser/extension/`, as the marketplace layout requires. Existing installs are re-pointed on the first start; restart the browser afterwards.
 - First-run setup says that it adds the browser extension to the launch flags before it does so.
 - Fix: changing the reset time, or a clock set backwards, could reopen a finished day and unlock without any task passing.
 - Fix: rewording a task no longer discards its check.
