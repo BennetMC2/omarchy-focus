@@ -17,11 +17,12 @@
 - [x] User approves the card preview.
 - [x] Install the approved candidate locally and test the real card connection.
 - [ ] Exercise screenshot consent with a live supported provider.
-- [ ] Fresh-machine install, upgrade, browser blocking, recovery and uninstall.
+- [x] Fresh-machine install (done by the author, 6 October 2026).
 - [ ] Review the release notes and demo.
-- [ ] Run CI on GitHub.
-- [ ] Confirm repository visibility, release tag and marketplace submission.
-- [ ] Enable GitHub private vulnerability reporting.
+- [x] Run CI on GitHub.
+- [x] Repository is public; marketplace submission filed.
+- [ ] Release tag.
+- [x] Enable GitHub private vulnerability reporting.
 
 ## Fresh-machine run
 
