@@ -1,6 +1,8 @@
 # What's been tested
 
-This is version 2.3.0-beta.1, checked on 5 and 6 October 2026. I've tried to be straight here about what has been run for real and what hasn't.
+The original checks below cover version 2.3.0-beta.1 on 5 and 6 October 2026. I've tried to be straight here about what has been run for real and what hasn't.
+
+On 9 October, version 2.3.0-beta.2 changed Grok/OpenCode prompt delivery to standard input. OpenCode 1.18.31 with `openai/gpt-5.6-luna` passed all four live smoke scenarios: task capture, starting the day, reading synthetic evidence and refusing an unsupported claim in hard mode. Grok 1.0.46 accepted the new launch options but reported "Not signed in", so a successful live Grok turn remains unverified for this change. Automated subprocess tests cover complete UTF-8 delivery and check that private history, tasks and messages are absent from backend and bridge process arguments and environment for Grok, OpenCode and Codex.
 
 ## Where it's been used
 

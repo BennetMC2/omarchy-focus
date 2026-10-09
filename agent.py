@@ -405,7 +405,7 @@ class ExecSession(Session):
                     '-c', 'model_reasoning_effort="low"']
         if settings.get('model'): command += ['-m', settings['model']]
         if self.attach: command += ['-i', self.attach]
-        return command + ['-'], env, True
+        return command + ['-'], env
 
     def pump(self):
         if self.busy or not self.queue: return
@@ -415,11 +415,11 @@ class ExecSession(Session):
         # No memory between turns, so every turn carries the instructions, the day so far and the state.
         prompt = self.PREFACE + ('' if self.forget else self.host.recap()) + self.host.digest() + '\n' + body
         try:
-            command, env, by_stdin = self.launch(settings)
-            self.proc = subprocess.Popen(command if by_stdin else command + [prompt], stdin=subprocess.PIPE if by_stdin else subprocess.DEVNULL,
-                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, bufsize=0)
-            if by_stdin:
-                self.proc.stdin.write(prompt.encode()); self.proc.stdin.close()
+            command, env = self.launch(settings)
+            # Private conversation and task data must never enter argv (visible in process listings).
+            self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL, env=env)
+            self.proc.stdin.write(prompt.encode()); self.proc.stdin.close()
         except OSError as exc:
             self.stop()
             self.host.turn_failed('The agent could not start: ' + one_line(exc, 200))
@@ -498,7 +498,8 @@ class GrokSession(ExecSession):
                     '--permission-mode', 'dontAsk', '--allow', 'mcp__focus', '--max-turns', '12',
                     '--output-format', 'streaming-messages-json']
         if settings.get('model'): command += ['--model', settings['model']]
-        return command + ['-p'], env, False
+        # Grok does not read piped input implicitly; its prompt-file option reads this pipe.
+        return command + ['--prompt-file', '/dev/stdin'], env
 
     def stop(self):
         super().stop()
@@ -548,7 +549,7 @@ class OpenCodeSession(ExecSession):
         command = jail(program, [], scratch, network=False) + ['--bind', way_out.path, way_out.path]
         command += ['/usr/bin/python3', str(common.PLUGIN/'netgate.py'), way_out.path, program, 'run', '--format', 'json', '--pure',
                     '--agent', 'focus', '-m', settings['model'], '--']
-        return command, env, False
+        return command, env
 
     def stop(self):
         super().stop()

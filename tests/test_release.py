@@ -13,6 +13,59 @@ import subprocess
 from model import Model
 from tools import Tools
 
+class PromptPrivacyTests(unittest.TestCase):
+    def test_private_turn_reaches_each_backend_without_entering_process_arguments(self):
+        import hashlib
+        import select
+        from unittest.mock import Mock
+        for kind, session_type in (('grok', agent.GrokSession), ('opencode', agent.OpenCodeSession), ('codex', agent.ExecSession)):
+            with self.subTest(provider=kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root/'.grok').mkdir()
+                (root/'.grok/auth.json').write_text('{}')
+                auth = root/'data/opencode/auth.json'
+                auth.parent.mkdir(parents=True)
+                auth.write_text('{}')
+                program = root/kind
+                program.write_text('''#!/usr/bin/python3
+import hashlib, json, os, pathlib, sys
+if '--prompt-file' in sys.argv:
+    payload = pathlib.Path(sys.argv[sys.argv.index('--prompt-file') + 1]).read_bytes()
+else:
+    payload = sys.stdin.buffer.read()
+print(json.dumps({'digest': hashlib.sha256(payload).hexdigest(),
+                  'argv': pathlib.Path('/proc/self/cmdline').read_text(),
+                  'parent_argv': pathlib.Path('/proc/%s/cmdline' % os.getppid()).read_text(),
+                  'env': dict(os.environ)}), flush=True)
+''')
+                program.chmod(0o700)
+                host = Mock()
+                host.model = Model()
+                host.model.s['settings']['model'] = 'openai/test-model'
+                host.recap.return_value = 'PRIVATE_HISTORY_83c2\n'
+                host.digest.return_value = 'PRIVATE_TASKS_e41a\n'
+                body = 'PRIVATE_MESSAGE_fa90: café\n' + 'large input\n' * 12000
+                session = session_type(host, kind)
+                gate = type('Gate', (), {'path': str(root/'unused-gate')})()
+                with patch.object(common, 'STATE', root), patch.object(Path, 'home', return_value=root), \
+                     patch.object(agent, 'opencode_auth', return_value=auth), patch.object(agent, 'binary', return_value=str(program)), \
+                     patch.object(agent, 'jail', return_value=['/bin/sh', '-c', 'shift 3; exec "$@"', 'test-jail']), \
+                     patch.object(agent, 'gate', return_value=gate):
+                    try:
+                        session.send(body)
+                        self.assertIsNotNone(session.proc, host.turn_failed.call_args)
+                        self.assertTrue(select.select([session.proc.stdout], [], [], 10)[0], 'backend did not receive EOF')
+                        result = json.loads(session.proc.stdout.readline())
+                        expected = (session.PREFACE + host.recap() + host.digest() + '\n' + body).encode()
+                        self.assertEqual(result['digest'], hashlib.sha256(expected).hexdigest())
+                        exposed = json.dumps([session.proc.args, result['argv'], result['parent_argv'], result['env']])
+                        for marker in ('PRIVATE_HISTORY_83c2', 'PRIVATE_TASKS_e41a', 'PRIVATE_MESSAGE_fa90'):
+                            self.assertNotIn(marker, exposed)
+                        host.turn_failed.assert_not_called()
+                    finally:
+                        session.stop()
+                    self.assertEqual(list((root/'agent-scratch').iterdir()), [])
+
 class CaptureTests(unittest.TestCase):
     def setUp(self):
         self.m=Model(); self.m.s['setup']=True; self.now=time.time()
@@ -93,9 +146,9 @@ class OpenCodeTests(unittest.TestCase):
             return session, home, session.launch(settings)
     def test_launch_isolated_profile_gate_and_cleanup(self):
         with tempfile.TemporaryDirectory() as tmp:
-            session,home,(command,env,stdin)=self.launch(Path(tmp),{'model':'openai/small-one'})
+            session,home,(command,env)=self.launch(Path(tmp),{'model':'openai/small-one'})
             profile=Path(env['XDG_DATA_HOME']).parent
-            self.assertFalse(stdin); self.assertIn('--unshare-net',command); self.assertIn('PRIVATE=[]',command)   # nothing of the real OpenCode folders is mounted
+            self.assertIn('--unshare-net',command); self.assertIn('PRIVATE=[]',command)   # nothing of the real OpenCode folders is mounted
             self.assertEqual(self.gates,[('opencode-openai',netgate.OPENCODE_HOSTS['openai'])])
             self.assertEqual(command[command.index('-m')+1],'openai/small-one'); self.assertEqual(command[command.index('--agent')+1],'focus'); self.assertEqual(command[-1],'--')
             for key in ('XDG_DATA_HOME','XDG_CONFIG_HOME','XDG_CACHE_HOME','XDG_STATE_HOME'): self.assertTrue(env[key].startswith(str(profile)))
@@ -110,15 +163,15 @@ class OpenCodeTests(unittest.TestCase):
             self.assertIn('synthetic-1',(home/'.local/share/opencode/auth.json').read_text())
     def test_a_renewed_sign_in_goes_back_to_the_user(self):
         with tempfile.TemporaryDirectory() as tmp:
-            session,home,(command,env,stdin)=self.launch(Path(tmp),{'model':'openai/small-one'})
+            session,home,(command,env)=self.launch(Path(tmp),{'model':'openai/small-one'})
             real=home/'.local/share/opencode/auth.json'; copy=Path(env['XDG_DATA_HOME'])/'opencode/auth.json'
             copy.write_text('{"openai":{"type":"oauth","refresh":"synthetic-2"}}'); session.stop()
             self.assertIn('synthetic-2',real.read_text()); self.assertEqual(real.stat().st_mode & 0o777,0o600)
             # Never over a login the user changed meanwhile, and never with something that is not a sign-in file.
-            session,home,(command,env,stdin)=self.launch(Path(tmp),{'model':'openai/small-one'})
+            session,home,(command,env)=self.launch(Path(tmp),{'model':'openai/small-one'})
             copy=Path(env['XDG_DATA_HOME'])/'opencode/auth.json'; copy.write_text('{"renewed":true}'); real.write_text('{"user":"signed in again"}'); session.stop()
             self.assertEqual(real.read_text(),'{"user":"signed in again"}')
-            session,home,(command,env,stdin)=self.launch(Path(tmp),{'model':'openai/small-one'})
+            session,home,(command,env)=self.launch(Path(tmp),{'model':'openai/small-one'})
             Path(env['XDG_DATA_HOME'],'opencode/auth.json').write_text('not json'); session.stop()
             self.assertIn('synthetic-1',real.read_text())
     def test_model_decides_the_route_and_the_label(self):
@@ -153,10 +206,11 @@ class GrokTests(unittest.TestCase):
             session=agent.GrokSession(host); session.token='test-token'
             gate=type('Gate',(),{'path':str(root/'gate')})()
             with patch.object(common,'STATE',root), patch.object(Path,'home',return_value=home), patch.object(agent,'binary',return_value='/usr/bin/grok'), patch.object(agent,'jail',return_value=['bwrap','--unshare-net']), patch.object(agent,'gate',return_value=gate):
-                command,env,stdin=session.launch({})
+                command,env=session.launch({})
                 profile=Path(env['GROK_HOME'])
-                self.assertFalse(stdin); self.assertIn('--unshare-net',command)
+                self.assertIn('--unshare-net',command)
                 self.assertEqual(command[command.index('--tools')+1],'search_tool,use_tool')
+                self.assertEqual(command[-2:],['--prompt-file','/dev/stdin']); self.assertNotIn('-p',command)
                 self.assertNotIn(str(home/'.grok'),command)
                 self.assertNotIn('UNTRUSTED_USER_PLUGIN',(profile/'config.toml').read_text())
                 self.assertEqual((profile/'auth.json').stat().st_mode & 0o777,0o600)

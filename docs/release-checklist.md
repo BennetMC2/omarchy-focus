@@ -5,7 +5,7 @@ What's left before 2.3.0 gets a tag:
 - [ ] Try the screenshot flow against a real agent: capture, cancel, preview, send.
 - [ ] Read the release notes once more.
 - [ ] Tag the release.
-- [ ] Marketplace listing approved (submitted 6 October, waiting on a maintainer).
+- [ ] Marketplace listing approved. The 6 October review blocked publication because Grok/OpenCode prompts were exposed in process arguments. Version 2.3.0-beta.2 fixes the transport; a fresh scan and maintainer approval are still required, including review of the privileged setup.
 
 Already done: tests passing on GitHub, a secret scan of the Git history, live runs with all four agents, a fresh install on a second machine, private vulnerability reporting switched on, and the marketplace submission.
 

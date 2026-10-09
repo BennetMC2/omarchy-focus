@@ -509,7 +509,7 @@ class AgentChoiceTests(unittest.TestCase):
             self.assertIsInstance(session,agent.ExecSession); session.token='tok'
             picture=Path(state)/'proof.jpg'; picture.write_bytes(b'x'); session.attach=str(picture)
             try:
-                command,env,_=session.launch(session.host.model.s['settings'])
+                command,env=session.launch(session.host.model.s['settings'])
                 self.assertEqual(command[0],'/usr/bin/bwrap'); self.assertIn('--unshare-user',command)
                 # No network of its own: the only way out is the gate, reached through the bridge that wraps the agent.
                 self.assertIn('--unshare-net',command); gate=agent.GATES['codex'].path
@@ -553,7 +553,7 @@ class AgentChoiceTests(unittest.TestCase):
             path='/nonexistent/gate'
         # The jail, the gate and the bridge are covered above; here the stand-in runs bare so the turn logic is what is tested.
         with tempfile.TemporaryDirectory() as state, patch.object(common,'STATE',Path(state)), patch.object(agent,'jail',return_value=[]), patch.object(agent,'gate',return_value=NoGate()), \
-             patch.object(agent.ExecSession,'launch',lambda self,settings: ([str(self_bin/'codex')],{'PATH':'/usr/bin:/bin'},True)):
+             patch.object(agent.ExecSession,'launch',lambda self,settings: ([str(self_bin/'codex')],{'PATH':'/usr/bin:/bin'})):
             host=Host(); session=agent.make_session(host); session.send('<user>today: two things</user>')
             for _ in range(200):
                 if not session.busy: break

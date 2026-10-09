@@ -2,6 +2,8 @@
 
 Submitted on 6 October 2026: https://github.com/omacom/omarchy-plugin-marketplace/issues/10210
 
+Status as of 9 October: **not published**. A maintainer blocked the submitted `f0ce9d5` snapshot because Grok and OpenCode placed private prompts in process arguments. Version 2.3.0-beta.2 sends prompts through standard input and removes the argument-based transport. It still needs a fresh exact-commit scan and maintainer approval; the privileged setup also requires manual review.
+
 For later versions, use the marketplace's Plugin verification form with the new commit SHA. Otherwise the listing shows "Update unverified".
 
 What was sent:

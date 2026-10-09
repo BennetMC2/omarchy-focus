@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "local.focus",
   "name": "Bouncer: Focus To-Do List",
-  "version": "2.3.0-beta.1",
+  "version": "2.3.0-beta.2",
   "author": "Bennet",
   "description": "A to-do list that keeps you focused. Your distracting sites and apps stay blocked until an agent has checked that today's tasks are done.",
   "license": "MIT",

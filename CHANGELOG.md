@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.0-beta.2
+
+- Private prompts, conversation history and task state now reach Grok Build and OpenCode through standard input, instead of process arguments visible to other local users. Grok uses `--prompt-file /dev/stdin`; OpenCode reads the pipe directly. The shared launcher no longer supports passing prompts as arguments.
+- Regression tests check the backend and bridge process arguments and environment, and verify complete delivery of a large UTF-8 prompt.
+
 ## 2.3.0-beta.1
 
 Renamed from Omarchy Focus to Bouncer. The plugin ID, the `focusctl` command, your tasks and your history are unchanged.
