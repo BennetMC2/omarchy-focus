@@ -1,8 +1,35 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Bouncer — Today</title><link rel="stylesheet" href="blocked.css"></head>
-<body hidden><main>
-<header><span id="status">Blocked</span><span id="count"></span></header>
-<h1>Today</h1><pre id="matrix" aria-hidden="true"></pre><ul id="tasks"></ul>
-<button id="done">I'm done with one</button> <button id="back">Back to work</button>
-<details><summary>Details</summary><p id="detail"></p></details>
-</main><script src="blocked.js"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bouncer — Not yet</title>
+  <link rel="stylesheet" href="blocked.css">
+</head>
+<body>
+  <main>
+    <header><span class="brand">Bouncer</span><span id="count">Connecting…</span></header>
+    <section class="interruption" aria-labelledby="headline">
+      <div class="door-scene" aria-hidden="true"><div class="door-frame"><div class="door"><span class="handle"></span></div></div><div class="threshold"></div></div>
+      <h1 id="headline">Not yet.</h1>
+      <p id="context" class="context">Your work comes first.</p>
+      <section id="priority" class="priority" aria-labelledby="priority-label" hidden>
+        <h2 id="priority-label">Main task</h2>
+        <p id="priority-title"></p>
+        <p id="priority-note" class="note" hidden></p>
+      </section>
+      <p id="empty" class="empty" hidden></p>
+      <div class="actions">
+        <button id="done" class="primary">Review my progress <span aria-hidden="true">→</span></button>
+        <button id="back" class="secondary">Back to work</button>
+      </div>
+      <details id="task-list" class="task-list" hidden>
+        <summary id="task-summary">View all tasks</summary>
+        <ul id="tasks"></ul>
+      </details>
+    </section>
+    <footer><span id="status" role="status">Connecting to Bouncer</span><details class="service-details"><summary>Details</summary><p id="detail">Waiting for the local service.</p></details></footer>
+  </main>
+  <script src="blocked.js"></script>
+</body>
+</html>

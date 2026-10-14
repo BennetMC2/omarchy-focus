@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The browser's blocked page now highlights your next task, shows progress and connection status, and puts the full task list in an expandable section. It includes a default theme and respects reduced-motion preferences.
+
 ## 2.3.0-beta.2
 
 - Private prompts, conversation history and task state now reach Grok Build and OpenCode through standard input, instead of process arguments visible to other local users. Grok uses `--prompt-file /dev/stdin`; OpenCode reads the pipe directly. The shared launcher no longer supports passing prompts as arguments.
